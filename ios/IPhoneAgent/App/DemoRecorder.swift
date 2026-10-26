@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// "Record me doing it": while the user does the task by hand, keep a keyframe each time the mirrored screen
+/// "Record me doing it": while the user does the task by hand, keep a keyframe each time the captured screen
 /// changes and settles. On stop, the model infers the steps from the keyframes (fingers are invisible to the
 /// board, so it guesses from before/after) and the draft opens in the review editor, unsure steps in yellow.
 @MainActor final class DemoRecorder: ObservableObject {
@@ -34,7 +34,7 @@ import UIKit
         started = Date()
         recording = true
         app.live.start(task: String(localized: "Recording a demonstration"), runID: "rec-" + dir.lastPathComponent,
-                       limit: 0, phase: .recording)
+                       phase: .recording)
         app.runMood = .listening
         loop = Task { [weak self] in await self?.capture() }
     }
@@ -47,7 +47,7 @@ import UIKit
             }
             return
         }
-        try? await app.feed.stream(true)
+        do { try await app.feed.start() } catch { self.error = error.localizedDescription; cancel(); return }
         var last: Data?
         while recording && !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 400_000_000)
@@ -70,6 +70,7 @@ import UIKit
         loop?.cancel()
         recording = false
         app.live.end(nil)
+        Task { await app.feed.stop() }
         app.runMood = nil
         if let folder { try? FileManager.default.removeItem(at: folder) }
     }
@@ -79,7 +80,7 @@ import UIKit
         guard recording, let folder else { return }
         loop?.cancel()
         recording = false
-        if !MockMode.on { try? await app.feed.stream(false) }
+        if !MockMode.on { await app.feed.stop() }
         app.live.end((.thinking, String(localized: "Working out the steps…")))
         inferring = true
         let bg = UIApplication.shared.beginBackgroundTask(withName: "infer")  // stopped from the Dynamic Island
@@ -103,7 +104,7 @@ import UIKit
 
     private func infer(_ frames: [URL]) async throws -> String {
         let images = frames.compactMap { try? Data(contentsOf: $0) }
-        let r = try await app.settings.client("planner").chat(system: Self.inferPrompt, text:
+        let r = try await app.settings.client().chat(system: Self.inferPrompt, text:
             "These are \(images.count) keyframes in order (frame 1 first). Infer the steps.",
             images: images, maxTokens: 1200, temperature: 0)
         return r.text

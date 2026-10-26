@@ -2,11 +2,10 @@ import Foundation
 
 /// Touch-like gestures on the phone, built from relative mouse moves. Port of phone.py.
 ///
-/// The pointer is relative, so the app tracks where it is (in mouse units) and moves from there; every few
-/// gestures it slams it into the top-left corner (`home`) again to cancel drift. Coordinates are fractions of
-/// the screen (0..1, origin top-left), so they work for any frame size.
+/// Positioning uses the same home → horizontal → vertical path as calibration. Relative moves remain
+/// available inside a held gesture, where homing or splitting a segment would change the stroke.
 @MainActor final class Pointer: ObservableObject {
-    static let calibrationMove = 200        // mouse units moved diagonally for a manual (one point) calibration
+    static let calibrationMove = 200        // units per axis for a manual seed, using the normal positioning path
     static let calibrationStops = [150, 350]  // automatic calibration finds the pointer at these distances
     static let rehomeEvery = 10             // gestures between re-homing
     static let hold = 0.25                  // s to rest before lifting, so iOS adds no momentum
@@ -14,9 +13,15 @@ import Foundation
     static let nudge = 12                   // mouse units the pointer is wiggled by to find it on screen
     static let aimTolerance = 0.008         // screen fraction; a bigger miss is corrected before pressing
     static let maxMiss = 0.06               // bigger misses are still corrected, but not learned from
+    static let calibrationTolerance = 0.015
+    static let positioningMethod = "home-xy-v1"
+    static let axisPause: Duration = .milliseconds(120)
 
     struct Span: Codable, Equatable { var w: Int, h: Int }
-    private struct Saved: Codable { var w: Int, h: Int, seen: [String: [[Double]]]?, quality: Double?, aspect: Double? }
+    private struct Saved: Codable {
+        var w: Int, h: Int, seen: [String: [[Double]]]?, quality: Double?, aspect: Double?, transport: String?
+        var positioning: String?, validated: Bool?
+    }
 
     let device: HIDDevice
     weak var screen: ScreenSource?
@@ -25,6 +30,8 @@ import Foundation
     private var pos: (Int, Int)?  // pointer position in mouse units; nil = unknown
     private var moves = 0
     private var link = 0  // device.links when the pointer was last homed
+    private var transport = "usb"  // existing calibrations were made with USB reports
+    private var validated = false
     /// where the pointer really landed (seen on screen) for the fraction we aimed at, per axis; a line fit
     /// through them corrects every later move, so taps get better as the agent works
     private(set) var seen: [String: [(Double, Double)]] = ["x": [], "y": []]
@@ -40,19 +47,41 @@ import Foundation
         self.device = device
         self.file = calibrationFile
         self.screen = screen
-        if let data = try? Data(contentsOf: calibrationFile), let saved = try? JSONDecoder().decode(Saved.self, from: data) {
+        if let data = try? Data(contentsOf: calibrationFile), let saved = try? JSONDecoder().decode(Saved.self, from: data),
+           saved.positioning == Self.positioningMethod, saved.validated == true,
+           saved.w > 0, saved.h > 0, let q = saved.quality, q.isFinite, q <= Self.calibrationTolerance, q >= 0 {
             span = Span(w: saved.w, h: saved.h)
             (quality, aspect) = (saved.quality, saved.aspect)
+            transport = saved.transport ?? "usb"
+            validated = true
             for axis in ["x", "y"] {
-                seen[axis] = (saved.seen?[axis] ?? []).filter { $0.count == 2 }.map { ($0[0], $0[1]) }.suffix(12)
+                seen[axis] = (saved.seen?[axis] ?? []).filter { $0.count == 2 && $0.allSatisfy(\.isFinite) }
+                    .map { ($0[0], $0[1]) }.suffix(32)
             }
         }
     }
 
     var calibrated: Bool { span != nil }
 
+    /// BLE and USB have different report timing. Never reuse their acceleration calibration.
+    func useTransport(_ value: String) {
+        guard transport != value else { return }
+        transport = value
+        clearCalibration()
+    }
+
+    func clearCalibration() {
+        span = nil; quality = nil; aspect = nil
+        validated = false
+        seen = ["x": [], "y": []]
+        invalidatePosition()
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    func invalidatePosition() { pos = nil; link = -1 }
+
     private func remember(_ axis: String, _ sample: (Double, Double)) {
-        seen[axis] = Array((seen[axis, default: []] + [sample]).suffix(12))  // deque(maxlen=12)
+        seen[axis] = Array((seen[axis, default: []] + [sample]).suffix(32))
     }
 
     /// Find the pointer on screen at two known distances from the corner and fit the mapping from both.
@@ -61,26 +90,26 @@ import Foundation
     func startCalibration(progress: ((Int) -> Void)? = nil) async throws -> Bool {
         pos = nil
         progress?(0)
-        try await device.send("home")
         var found: [(Int, Double, Double)] = []
         for (i, units) in Self.calibrationStops.enumerated() {
             progress?(i + 1)
-            let step = units - (found.last?.0 ?? 0)
-            try await device.send("move \(step) \(step)")
+            try await positionFromHome(units, units)
             guard let screen, screen.live, let p = try await findPointer() else { break }
+            try Task.checkCancellation()
             found.append((units, p.x, p.y))
         }
         if found.count < 2 {
             log("calibration: pointer not found on screen, waiting for a tap")
             if found.isEmpty {
-                try await device.send("home")
-                try await device.send("move \(Self.calibrationMove) \(Self.calibrationMove)")
+                try await positionFromHome(Self.calibrationMove, Self.calibrationMove)
             }
             return false
         }
         let (u1, x1, y1) = found[0], (u2, x2, y2) = found[1]
+        guard x2 > x1, y2 > y1 else { return false }
         let s = Span(w: Int((Double(u2 - u1) / (x2 - x1)).rounded(.toNearestOrEven)), h: Int((Double(u2 - u1) / (y2 - y1)).rounded(.toNearestOrEven)))
         span = s
+        validated = false
         (quality, aspect) = (nil, screenAspect())
         seen = ["x": [], "y": []]
         for (units, x, y) in found {  // where each stop landed, so moves are corrected for the offset too
@@ -115,6 +144,8 @@ import Foundation
 
     /// x, y: where the pointer ended up after startCalibration() (one point, picked by the user).
     func finishCalibration(x: Double, y: Double) {
+        guard ProbeFit.usable(x), ProbeFit.usable(y) else { clearCalibration(); return }
+        validated = false
         (quality, aspect) = (nil, screenAspect())
         span = Span(w: Int((Double(Self.calibrationMove) / x).rounded(.toNearestOrEven)), h: Int((Double(Self.calibrationMove) / y).rounded(.toNearestOrEven)))
         seen = ["x": [], "y": []]
@@ -126,6 +157,7 @@ import Foundation
     func applyProbe(x: ProbeFit.Line, y: ProbeFit.Line, samples: [(ux: Double, uy: Double, fx: Double, fy: Double)]) {
         let s = Span(w: Int((1 / x.a).rounded()), h: Int((1 / y.a).rounded()))
         span = s
+        validated = false
         (quality, aspect) = (max(x.rms, y.rms), screenAspect())
         seen = ["x": [], "y": []]
         for p in samples {
@@ -140,7 +172,9 @@ import Foundation
 
     /// A measured check (e.g. a probe tap) as the current accuracy.
     func setQuality(_ q: Double) {
+        guard q.isFinite, q >= 0, q <= Self.calibrationTolerance else { clearCalibration(); return }
         quality = q
+        validated = true
         save()
     }
 
@@ -148,13 +182,13 @@ import Foundation
     private func save() {
         guard let span else { return }
         let saved = Saved(w: span.w, h: span.h, seen: seen.mapValues { $0.map { [$0.0, $0.1] } }, quality: quality,
-                          aspect: aspect)
+                          aspect: aspect, transport: transport, positioning: Self.positioningMethod, validated: validated)
         try? JSONEncoder().encode(saved).write(to: file)
     }
 
     func point(_ x: Double, _ y: Double, aim: Bool = false) async throws {
         guard calibrated else { throw DeviceError(message: "pointer not calibrated") }
-        try await moveTo(dx(x), dy(y))
+        try await positionFromHome(dx(x), dy(y))
         if aim && screen != nil { try await self.aim(x, y) }
     }
 
@@ -205,9 +239,32 @@ import Foundation
         try await point(x, y)
         guard let found = try await measure(x, y) else { return nil }
         let error = max(abs(Double(found.x) - x), abs(Double(found.y) - y))
-        quality = error
-        save()
         return error
+    }
+
+    /// Shared by touch probes, manual seeds and every unpressed positioning move. Never infer that a
+    /// previous command reached its target; return to the reference corner, then move one axis at a time.
+    func positionFromHome(_ ux: Int, _ uy: Int) async throws {
+        try Task.checkCancellation()
+        guard ux >= 0, uy >= 0, ux <= 32767, uy <= 32767 else {
+            throw DeviceError(message: "Calibration produced an invalid mouse distance")
+        }
+        pos = nil
+        if link != device.links {
+            try await device.send("release")
+            link = device.links
+        }
+        try await device.send("home")
+        try await Task.sleep(for: Self.axisPause)
+        if ux != 0 {
+            try await device.send("move \(ux) 0")
+            try await Task.sleep(for: Self.axisPause)
+        }
+        if uy != 0 {
+            try await device.send("move 0 \(uy)")
+            try await Task.sleep(for: Self.axisPause)
+        }
+        (pos, moves) = ((ux, uy), 0)
     }
 
     /// How far the learned correction has moved targets away from the plain calibration (fraction of the screen).
@@ -271,15 +328,27 @@ import Foundation
     /// Press at the first point, move through the rest, release: one continuous stroke. hold rests at the end
     /// first, so lists and pickers stop exactly there; system gestures (home, back) need the flick.
     func drag(_ points: [CGPoint], hold: Bool = true) async throws {
-        try await point(Double(points[0].x), Double(points[0].y))
-        try await device.send("press")
+        try await stroke(points, duration: 0, hold: hold)
+    }
+
+    /// Duration is a minimum: the board also paces each HID movement.
+    func stroke(_ points: [CGPoint], duration: Double, hold: Bool = false) async throws {
+        guard let first = points.first else { return }
+        try await point(first.x, first.y)
         do {
-            for p in points.dropFirst() {
-                try await moveTo(dx(Double(p.x)), dy(Double(p.y)), rehome: false)  // never home mid-drag
+            try await device.send("press")
+            let started = now()
+            for (i, p) in points.dropFirst().enumerated() {
+                try Task.checkCancellation()
+                try await moveTo(dx(p.x), dy(p.y), rehome: false)
+                let remaining = started + duration * Double(i + 1) / Double(points.count - 1) - now()
+                if remaining > 0 { try await Task.sleep(for: .seconds(remaining)) }
             }
-            if hold { try await Task.sleep(nanoseconds: UInt64(Self.hold * 1e9)) }
+            if points.count == 1 { try await Task.sleep(for: .seconds(duration)) }
+            if hold { try await Task.sleep(for: .seconds(Self.hold)) }
         } catch {
-            _ = try? await device.send("release")
+            // Release even when the parent task was cancelled.
+            _ = await Task { @MainActor [device] in try? await device.send("release") }.value
             throw error
         }
         try await device.send("release")
@@ -296,7 +365,8 @@ import Foundation
     /// without it (older firmware) answer an error: then Cmd+H and the flick up from the home bar (a flick, not
     /// a rest: resting opens the app switcher).
     func goHome() async throws {
-        if (try? await device.send("homescreen")) != nil { return }
+        do { try await device.send("homescreen"); return }
+        catch let error as DeviceError where error.message == "err unknown command" { /* older firmware */ }
         try await key("cmd+h")
         try await Task.sleep(nanoseconds: 350_000_000)
         try await swipe(0.5, 0.995, 0.5, 0.45, hold: false)

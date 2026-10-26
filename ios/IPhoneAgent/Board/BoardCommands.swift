@@ -4,7 +4,12 @@ import Foundation
 struct BoardTimeout: LocalizedError {
     let command: String
     let seconds: Double
-    var errorDescription: String? { String(format: "the board did not answer '%@' within %.0f s", command, seconds) }
+    var errorDescription: String? {
+        let message = String(format: "the board did not answer '%@' within %.0f s", command, seconds)
+        let name = String(command.split(separator: " ").first ?? "")
+        return ["click", "move", "press", "type", "key", "scroll", "homescreen"].contains(name)
+            ? message + "; execution is uncertain, inspect the screen before trying again" : message
+    }
 }
 
 struct DeviceError: LocalizedError {
@@ -98,26 +103,24 @@ extension BoardTransport {
         return connected
     }
 
-    /// Seconds the board may take: replies need up to ~2 s at p99, moves are paced (10 units per 8 ms),
+    /// Seconds the board may take: replies need up to ~2 s at p99, moves are paced (10 units per 15 ms),
     /// typing is per character.
     nonisolated static func timeout(_ command: String) -> Double {
         let parts = command.split(separator: " ", maxSplits: 1).map(String.init)
         let name = parts.first ?? "", arg = parts.count > 1 ? parts[1] : ""
         switch name {
-        case "move": return 5 + Double(arg.split(separator: " ").compactMap { Int($0) }.map(abs).max() ?? 0) / 10 * 0.012
+        case "move", "scroll": return 5 + Double(arg.split(separator: " ").compactMap { Int($0) }.map(abs).max() ?? 0) / 10 * 0.030
         case "type": return 5 + 0.1 * Double(arg.count)
         case "ping": return 8  // an idle check: tolerate a hiccup rather than drop a healthy board
-        case "snap": return 15  // a whole GOP over BLE
-        case "bench": return 5 + (Double(arg) ?? 0) / 10  // KB at >= 80 kbps
         default: return 5
         }
     }
 
-    /// Called once when a command times out (e.g. video starving control traffic): the app turns the
-    /// stream off, then the command is retried once.
+    /// Called once when a command times out: the app turns the
+    /// stream off. Only read-only commands can be retried: HID may already have executed.
     var onTimeout: ((String) async -> Void)?
 
-    /// Send one command; returns the text after "ok" (e.g. bench's ms). Throws DeviceError on err/timeout.
+    /// Send one command; returns the text after "ok". Throws DeviceError on err/timeout.
     @discardableResult
     func send(_ command: String) async throws -> String {
         do {
@@ -125,6 +128,7 @@ extension BoardTransport {
         } catch let e as BoardTimeout {
             guard command != "ping", !command.hasPrefix("stream"), let onTimeout else { throw e }
             await onTimeout(command)
+            guard ["snap", "status"].contains(command) else { throw e }
             DebugLog.write("cmd retry after timeout: \(command.prefix(40))")
             return try await send(command, timeout: nil)
         }
@@ -139,6 +143,7 @@ extension BoardTransport {
         let name = String(command.split(separator: " ").first ?? "")
         await lock.lock()
         defer { lock.unlock() }
+        try Task.checkCancellation()
         let started = now()
         let id = nextID
         nextID += 1
@@ -213,7 +218,7 @@ extension BoardTransport {
             try? await Task.sleep(nanoseconds: UInt64(heartbeat * 1e9))
             if !connected || now() - beat < heartbeat { continue }
             do {
-                // nudge only a phone that is awake and mirroring: there is nothing to keep awake otherwise
+                // nudge only a phone that is awake and sharing its screen: there is nothing to keep awake otherwise
                 if now() - last > idle && screenLive() {
                     try await send("move 1 0")
                     try await send("move -1 0")

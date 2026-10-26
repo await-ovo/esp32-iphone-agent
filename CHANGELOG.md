@@ -1,14 +1,14 @@
 # Changelog
 
-## Unreleased (main)
+## Unreleased (fork)
 
-- No computer: the ESP32 is the AirPlay receiver (ported from UxPlay) with its own hotspot, and talks to a new
-  iPhone app over BLE. The app is the agent: planner/actor loop, pointer calibration, run replay, Live Activity,
-  widgets, Siri and Shortcuts, self-healing when the board, hotspot or mirroring drops.
-- Prompts moved to `prompts/`.
-- Product name: ESP32 Agent.
-- `server/` is legacy and no longer needed.
+- Replace the board's AirPlay receiver and video forwarding with on-device ScreenCaptureKit capture; requires iOS 27+.
+- Use BLE HID mouse and keyboard input so the board only needs power.
+- Integrate the [Midscene SDK](https://github.com/web-infra-dev/midscene) for planning, grounding and action selection.
+- Adapt pointer calibration, connection recovery, run review and Live Activity to the new capture and input paths.
+- Remove the legacy Python server, custom planner/actor prompts and unused migration artifacts.
 
-## v0.1.0
+## Upstream history
 
-- Computer-side version: UxPlay + Python server + web UI; the ESP32 is a USB HID bridge over Wi-Fi.
+This fork builds on [onehumanbeing/esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent).
+See the upstream repository for releases and earlier architectures.

@@ -1,73 +1,54 @@
 # BLE protocol (ESP32 ⇄ iOS app)
 
-The board is a BLE peripheral named `ESP32 Agent XXXX` (XXXX = last 2 MAC bytes, hex).
-Security: LE Secure Connections, bonding, Just Works. `net` requires an encrypted link,
-so reading it triggers the iOS pairing prompt.
+The board is a BLE peripheral named `ESP32 Agent XXXX` (last two Bluetooth MAC bytes).
+It executes HID input. ScreenCaptureKit captures the screen on the iPhone; no images or network credentials travel over BLE.
+Security uses LE Secure Connections, bonding and Just Works. Reading encrypted `status` triggers pairing.
 
-Service `6e400001-a9e8-4b1b-9c39-6d6f8a3c0000`
+Service: `6e400001-a9e8-4b1b-9c39-6d6f8a3c0000`.
 
-| Characteristic | UUID suffix | Props | Purpose |
+| Characteristic | UUID suffix | Properties | Purpose |
 |---|---|---|---|
-| `cmd`    | `...0001` | write, write-no-rsp | one command line, UTF-8, `<id> <command>` |
-| `reply`  | `...0002` | notify | `<id> ok` or `<id> err <reason>` |
-| `status` | `...0003` | notify, read | JSON heartbeat, every 1 s (also keeps the app alive in background) |
-| `video`  | `...0004` | notify | H.264 chunks, see below |
-| `net`    | `...0005` | read, write (encrypted) | network config JSON |
+| cmd | 0001 | encrypted write, write without response | UTF-8 `<id> <command>` |
+| reply | 0002 | notify | `<id> ok [result]` or `<id> err <reason>` |
+| status | 0003 | encrypted read, notify | JSON status, once per second; full value available by read |
 
-Full UUID = `6e400001-a9e8-4b1b-9c39-6d6f8a3c` + 4-hex suffix, e.g. cmd = `6e400001-a9e8-4b1b-9c39-6d6f8a3c0001`.
+Replace the final four digits of the service UUID with the suffix above. The former video and network characteristics have been removed.
 
-## cmd
-`<id>` is a decimal request id chosen by the app; the reply echoes it.
-Existing HID commands, unchanged semantics from the old TCP protocol:
-`ping`, `home`, `move DX DY`, `press`, `release`, `click`, `scroll A B`, `type TEXT`, `key COMBO`.
-New:
-- `stream on|off` — continuously forward every access unit over `video` (default off).
-- `snap` — send SPS/PPS + every AU since the last IDR (the current GOP), then reply `ok`.
-- `res W H` — AirPlay resolution advertised in `/info` (default 480 1040), stored in NVS; takes effect on the next mirroring session.
-- `fps N` — max fps advertised (default 5), stored in NVS.
-- `bench KB` — send KB kilobytes of filler on `video` with the `bench` flag, then reply `ok <ms>`.
-- `unpair` — erase all bonds and restart advertising.
-- `coex [bt|balance|wifi]` — Wi-Fi/BLE radio-share preference (A/B knob, not stored; every boot starts at
-  `balance`). Replies `ok <current>`; bare `coex` just reports it.
-When the link drops, the board releases all buttons/keys (same as before).
+## Commands
 
-## status (JSON, one notify per second, must fit one MTU; keep short keys)
+`id` is a decimal request ID; the response echoes it. Supported commands:
+
+- `ping`, `status` — connectivity and current status.
+- `home` — rehome the relative mouse pointer; distinct from the system Home Screen.
+- `homescreen` — Consumer AC Home (`0x0223`), returning to the Home Screen.
+- `move DX DY`, `press`, `release`, `click`, `scroll V H` — relative mouse input.
+- `type TEXT`, `key COMBO` — US-layout ASCII typing and keyboard shortcuts (for example `cmd+h`).
+- `app COMMAND`, `log TEXT` — development relay between the Mac and app; not capture transport.
+- `unpair` — erase bonds and restart advertising.
+
+UART accepts the same `<id> <command>` format. An acknowledged command means reports were handed to the Bluetooth stack, not that the screen reached the intended state. The agent verifies the resulting screenshot. Timed-out input is not blindly replayed.
+
+## Status
+
 ```json
-{"up":123456,"rst":"power-on","heap":81234,"psram":6200000,"usb":"ok|asleep|off",
- "net":"ap|sta|none","ip":"192.168.4.1","sta":1,
- "ap":"idle|connected|streaming","w":480,"h":1040,"kbps":180,"fps":4.8,"idr":2000,"gop":42000,
- "ble":{"mtu":247,"phy":2,"kbps":350,"drop":0,"rdrop":0,"n":1}}
+{"up":123456,"rst":"power-on","heap":81234,"hid":"ok","hgen":1,"ble":{"mtu":515,"phy":1,"rdrop":0,"n":1}}
 ```
-`kbps` = AirPlay video bitrate in, `ble.kbps` = video bytes out over BLE, `idr` = ms between IDRs, `gop` = bytes buffered since last IDR.
-`rst` = reset reason of the current boot (`power-on|brownout|watchdog|crash|software|usb|other`), `up` = ms since boot.
-`ble.drop` = video notifies given up, `ble.rdrop` = replies that never reached a subscribed peer (should stay 0),
-`ble.n` = connected centrals.
 
-Send priority: replies and status are queued and always go out before further video; video keeps at most
-~8 ACL packets (~2 KB) in the controller, so a reply waits behind at most that much video. In `stream on`,
-a P-frame more than 800 ms old is skipped and the stream resumes at the next IDR (a slow link degrades to
-IDR-only instead of building latency).
+`up` is milliseconds since boot; `rst` is `power-on|brownout|watchdog|crash|software|usb|other`.
+`ble.rdrop` counts dropped replies and `ble.n` counts connected centrals. Notify payloads must fit MTU−3; the app also reads status periodically.
 
-## video
-Each notify: `[seq u16 LE][flags u8][payload]`, payload up to MTU-3-3 bytes.
-flags: bit0 START of access unit, bit1 END of access unit, bit2 IDR, bit3 CONFIG (payload is SPS+PPS),
-bit4 BENCH (filler, ignore), bit5 SNAP (part of a snap reply).
-Payload is Annex-B (`00 00 00 01` start codes). On a START chunk the first 4 payload bytes are a u32 LE
-board timestamp (ms) for latency stats, followed by the Annex-B data.
-`seq` increments per notify; the app counts gaps as drops and waits for the next IDR/CONFIG after a gap.
+`hid` is independent of the custom app connection: `ok` requires an encrypted, unsuspended host subscribed to all three input reports in report mode; `asleep` means HID suspend; `off` means not ready. `hgen` changes on relevant input/command connection, subscription, suspend and protocol transitions so the app can invalidate pointer position.
 
-## net (JSON)
-Read: `{"mode":"ap","ssid":"ESP32Agent-1A2B","pass":"<random 12 chars>","ip":"192.168.4.1"}`
-(SoftAP credentials are generated once at first boot and kept in NVS).
-Write `{"mode":"ap"}` or `{"mode":"sta","ssid":"...","pass":"..."}` — stored in NVS, board restarts Wi-Fi.
+## System HID service
 
-## AirPlay
-Receiver name `ESP32 Agent`, mirroring only (no audio), H.264 only, resolution/fps from NVS.
+The same peripheral advertises standard service `0x1812`. iOS owns it; the app uses the custom service above. Pair in Settings → Accessibility → Touch → AssistiveTouch → Devices → Bluetooth Devices.
 
-## Deviations (firmware notes)
-- `status`: if the negotiated MTU is too small for the full JSON (MTU-3 < ~255 bytes), the notify carries a
-  reduced object `{"up","rst","usb","net","ap","ble":{"mtu"}}`; a `status` read always returns the last full JSON.
-- `sta` in `status` = number of stations on the board's hotspot (mode `ap`), or 1/0 = connected (mode `sta`).
-- `net` read in `sta` mode returns the station network's `ssid`/`pass`.
-- `snap` while mirroring has stopped returns the last buffered GOP (check `"ap"` in status); `snap` without
-  any video replies `err no video ...`.
+| Report ID | Input payload | Purpose |
+|---|---|---|
+| 1 | buttons, X, Y, wheel, pan (5 bytes) | Relative mouse, signed 8-bit deltas |
+| 2 | modifiers, reserved, six key usages (8 bytes) | ASCII keyboard; 1-byte LED output |
+| 3 | usage (2 bytes, little-endian) | Consumer control including Home |
+
+Report IDs live in GATT Report Reference descriptors, not notification payloads. The report map lists the keyboard collection first. Only one HID host owns input; a separate debug central can use the custom service. Boot protocol is unsupported. Mouse movement uses 10-unit chunks paced at 15 ms.
+
+A new input session begins with keys/buttons released. Command-peer loss releases input; failed releases must drain before accepting another gesture. App connection, system HID readiness, screen sharing and pointer calibration are separate prerequisites.

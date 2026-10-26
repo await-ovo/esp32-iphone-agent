@@ -43,6 +43,7 @@ struct StepFrame: View {
         let a = step.action
         switch step.name {
         case "type": Bubble(symbol: "keyboard", text: a["text"]?.str ?? "")
+        case "clear": Bubble(symbol: "delete.left", text: String(localized: "Clear input"))
         case "key": Bubble(symbol: "command", text: a["combo"]?.str ?? "")
         case "home": Bubble(symbol: "house.fill", text: String(localized: "Home"))
         case "back": Bubble(symbol: "chevron.backward", text: String(localized: "Back"))
@@ -82,9 +83,9 @@ struct ActionOverlay: View {
             let p = { (x: Double, y: Double) in CGPoint(x: x / 1000 * size.width, y: y / 1000 * size.height) }
             let n = { (k: String) in action[k]?.double ?? 0 }
             switch action["action"]?.str {
-            case "tap":
+            case "tap", "longpress":
                 Ripple(t: t).position(p(n("x"), n("y")))
-            case "swipe":
+            case "swipe", "scroll":
                 Trail(points: [p(n("x1"), n("y1")), p(n("x2"), n("y2"))], t: t)
             case "path":
                 Trail(points: points(action).map { p($0.x, $0.y) }, t: t)

@@ -2,36 +2,66 @@
   "sourceLanguage" : "en",
   "strings" : {
     "${applicationName} status" : {
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "${applicationName} status",
+              "Is ${applicationName} ready"
+            ]
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "${applicationName}状态"
           }
         }
       }
     },
     "Ask ${applicationName} to do something" : {
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Ask ${applicationName} to do something",
+              "Give ${applicationName} a task"
+            ]
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "让${applicationName}做件事"
           }
         }
       }
     },
     "Calibrate ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Calibrate ${applicationName}"
+            ]
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "校准${applicationName}"
           }
         }
       }
     },
     "Give ${applicationName} a task" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -42,6 +72,7 @@
       }
     },
     "Is ${applicationName} ready" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -52,16 +83,27 @@
       }
     },
     "Run ${applicationName} intent ${intent}" : {
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Run ${applicationName} intent ${intent}",
+              "Run ${intent} with ${applicationName}"
+            ]
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "用${applicationName}运行${intent}"
           }
         }
       }
     },
     "Run ${intent} with ${applicationName}" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -72,10 +114,19 @@
       }
     },
     "Stop ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Stop ${applicationName}"
+            ]
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "停止${applicationName}"
           }
         }

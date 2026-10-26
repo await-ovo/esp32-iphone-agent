@@ -36,9 +36,6 @@ struct AgentSnapshot: Codable, Equatable {
         }
     }
 
-    /// The intent "Run last intent" starts: the last one run, else the first saved.
-    var lastItem: Item? { intents.first { $0.id == lastIntent } ?? intents.first }
-
     /// Mock data for widget previews and the gallery.
     static let preview = AgentSnapshot(
         status: .ready,

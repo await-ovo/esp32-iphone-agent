@@ -1,4 +1,5 @@
 # Store builds: `fastlane beta` (from ios/) archives a Release and uploads it to TestFlight.
+# Set IA_STORE_BUNDLE_ID to your own registered app identifier before running it.
 # Auth is an App Store Connect API key described in ~/.appstoreconnect/config.env
 # (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH); signing uses Xcode's Apple ID and the team in Config/Local.xcconfig.
 # The LLM preset from Local.xcconfig is cleared and the built app is checked for it.

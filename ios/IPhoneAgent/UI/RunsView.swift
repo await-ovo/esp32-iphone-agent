@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct RunsView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var runs: RunStore
-    @ObservedObject var agent: AgentLoop
+    @ObservedObject var agent: MidsceneController
     @State private var importing = false
     @State private var importError: String?
 

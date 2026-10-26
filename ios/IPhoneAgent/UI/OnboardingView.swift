@@ -6,7 +6,7 @@ import SwiftUI
 struct OnboardingView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var board: BoardLink
-    @ObservedObject var feed: VideoFeed
+    @ObservedObject var feed: ScreenCaptureFeed
     @ObservedObject var settings: Settings
     @ObservedObject var calibrator: AutoCalibrator
     @ObservedObject var pointer: Pointer
@@ -14,16 +14,14 @@ struct OnboardingView: View {
     @State private var page = SetupPage.welcome
     @State private var forward = true
     @State private var accepted = false
-    @State private var onWiFi = false  // the user says they joined by hand
     @State private var testing = false
 
-    init(app: AppModel, board: BoardLink, feed: VideoFeed, settings: Settings, calibrator: AutoCalibrator,
+    init(app: AppModel, board: BoardLink, feed: ScreenCaptureFeed, settings: Settings, calibrator: AutoCalibrator,
          pointer: Pointer, start: SetupPage) {
         self.app = app; self.board = board; self.feed = feed; self.settings = settings
         self.calibrator = calibrator; self.pointer = pointer; self.start = start
         _page = State(initialValue: start)
         _accepted = State(initialValue: settings.acceptedDisclaimer)
-        _onWiFi = State(initialValue: app.hotspotSSID != nil)
     }
 
     var body: some View {
@@ -43,7 +41,9 @@ struct OnboardingView: View {
         .background(Palette.grouped.ignoresSafeArea())
         .animation(.spring(response: 0.45, dampingFraction: 0.9), value: page)
         .onChange(of: pageDone) { _, done in
-            guard done, page != .welcome, page != .brain else { return }
+            // Keep the presenting screen in place while the system sharing picker dismisses.
+            // Screen sharing is confirmed with Continue, rather than dismissing its presenter on stream start.
+            guard done, page != .welcome, page != .see, page != .brain else { return }
             let from = page
             Task {
                 try? await Task.sleep(nanoseconds: 900_000_000)
@@ -111,14 +111,12 @@ struct OnboardingView: View {
 
     // MARK: - per page state
 
-    private var streaming: Bool { board.connected && board.status?.ap == "streaming" }
-
     /// The page's goal is reached (drives auto-advance).
     private var pageDone: Bool {
         switch page {
         case .welcome: return false
         case .connect: return board.connected
-        case .see: return streaming
+        case .see: return false
         case .act: return pointer.calibrated && !calibrator.busy
         case .brain: return app.modelOK == true
         }
@@ -128,34 +126,21 @@ struct OnboardingView: View {
     private var waiting: Bool {
         switch page {
         case .connect: return !board.connected && (board.scanning || board.connecting || board.linking)
-        case .see: return !streaming && (onHotspot || app.join.busy)
+        case .see: return false
         case .act: return calibrator.busy
         case .brain: return testing
         default: return false
         }
     }
 
-    /// The mouse and mirroring are up: calibration can run.
-    private var actReady: Bool { MockMode.on || (calibrator.boardReady && calibrator.mirroring) }
-
-    /// On the board's hotspot: joined in-app, confirmed by hand, or the board reports a client.
-    private var onHotspot: Bool {
-        app.otherWiFi == nil && (onWiFi || app.join == .joined || app.hotspotSSID != nil || (board.connected && (board.status?.sta ?? 0) > 0))
-    }
+    /// The mouse is connected: calibration can run.
+    private var actReady: Bool { MockMode.on || (calibrator.boardReady) }
 
     private var primaryTitle: LocalizedStringKey {
         switch page {
         case .welcome: return "Get Started"
         case .connect: return board.connected ? "Continue" : waiting ? "Looking for the board…" : "Scan Again"
-        case .see:
-            if streaming { return "Continue" }
-            if onHotspot { return "Waiting for mirroring…" }
-            switch app.join {
-            case .joining: return "Joining…"
-            case .verifying: return "Checking…"
-            case .failed: return "Try Again"
-            default: return "Join the Board's Wi-Fi"
-            }
+        case .see: return "Continue"
         case .act:
             if pointer.calibrated { return "Continue" }
             if calibrator.busy { return "Calibrating…" }
@@ -170,7 +155,7 @@ struct OnboardingView: View {
         switch page {
         case .welcome: return accepted
         case .connect: return board.connected || (board.state == .poweredOn && !waiting)
-        case .see: return streaming || (!onHotspot && !app.join.busy)
+        case .see: return true
         case .act: return !calibrator.busy && (pointer.calibrated || actReady)
         case .brain: return !testing && (app.modelOK == true || app.modelReady)
         }
@@ -180,8 +165,6 @@ struct OnboardingView: View {
         switch page {
         case .connect where !board.connected:
             board.retryDiscovery()
-        case .see where !streaming:
-            app.startJoin()
         case .act where !pointer.calibrated:
             calibrator.calibrate(why: String(localized: "first setup"))
         case .brain where app.modelOK != true:
@@ -202,7 +185,7 @@ struct OnboardingView: View {
         switch page {
         case .welcome: WelcomePage(accepted: $accepted)
         case .connect: ConnectPage(board: board)
-        case .see: SeePage(app: app, board: board, onWiFi: $onWiFi)
+        case .see: SeePage(app: app, board: board)
         case .act: ActPage(app: app, board: board, calibrator: calibrator, pointer: pointer)
         case .brain: BrainPage(app: app, settings: settings)
         }

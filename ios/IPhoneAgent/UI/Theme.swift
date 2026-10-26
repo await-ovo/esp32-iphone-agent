@@ -8,20 +8,14 @@ enum Space {
     static let m: CGFloat = 12
     static let l: CGFloat = 16
     static let xl: CGFloat = 24
-    static let xxl: CGFloat = 32
 }
 
 enum Palette {
-    static let ink = Color.primary
-    static let muted = Color.secondary
-    static let accent = Color.accentColor
     static let stop = Color.red
     static let warning = Color.orange
     static let ok = Color.green
     static let surface = Color(uiColor: .secondarySystemGroupedBackground)
     static let grouped = Color(uiColor: .systemGroupedBackground)
-    static let background = Color(uiColor: .systemBackground)
-    static let line = Color(uiColor: .separator)
 }
 
 enum Haptics {

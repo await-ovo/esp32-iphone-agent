@@ -1,6 +1,6 @@
 import Foundation
 
-/// Parsing of the model's replies; a line-for-line port of agent.py (parse_command, parse_actions, parse_plan).
+/// Action notation used by demonstrations, review editing, and legacy traces.
 enum Actions {
     struct ParseError: LocalizedError {
         let message: String
@@ -8,7 +8,8 @@ enum Actions {
     }
 
     /// Bookkeeping keys that are not part of the action itself.
-    static let meta: Set<String> = ["t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed"]
+    static let meta: Set<String> = ["t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed",
+                                    "id", "traceVersion", "frame", "sdkAction", "status", "frameWidth", "frameHeight"]
 
     /// action name -> argument names; numeric arguments are 0-1000 screen coordinates
     static let actions: [String: [String]] = [
@@ -45,33 +46,10 @@ enum Actions {
         return action
     }
 
-    /// Parse a THINK / DO… reply (an optional ZH line is kept); the thought goes on the first action.
-    static func parseActions(_ text: String) throws -> [JObject] {
-        let thought = firstGroup(#"^\s*THINK\s*[:：]\s*(.*?)\s*$"#, in: text, multiline: true)
-        let zh = firstGroup(#"^\s*ZH\s*[:：]\s*(.*?)\s*$"#, in: text, multiline: true)
-        var acts = try allGroups(#"^\s*DO\s*[:：]\s*(.*?)\s*$"#, in: text).map(parseCommand).prefix(6).map { $0 }
-        guard !acts.isEmpty else { throw ParseError(message: "no DO line in reply: \(text.prefix(200))") }
-        acts[0] = JObject([("thought", .str(thought ?? "")), ("thought_zh", .str(zh ?? ""))]).merging(acts[0])
-        return acts
-    }
-
-    /// Split an optional EN: / ZH: plan reply; a plain reply is used for both.
-    static func parsePlan(_ text: String) -> (String, String) {
-        let re = try! NSRegularExpression(pattern: #"EN\s*[:：](.*?)ZH\s*[:：](.*)"#,
-                                          options: [.dotMatchesLineSeparators, .caseInsensitive])
-        let ns = text as NSString
-        if let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
-            return (trim(ns.substring(with: m.range(at: 1))), trim(ns.substring(with: m.range(at: 2))))
-        }
-        return (trim(text), trim(text))
-    }
-
     /// The action itself, without thoughts, timings and other bookkeeping.
     static func key(_ step: JObject) -> JObject { step.without(meta) }
 
     // MARK: - helpers
-
-    private static func trim(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private static func partition(_ s: String) -> (String, String) {
         guard let i = s.firstIndex(of: " ") else { return (s, "") }
@@ -88,33 +66,7 @@ enum Actions {
             .map { ns.substring(with: $0.range) }
     }
 
-    private static func firstGroup(_ p: String, in s: String, multiline: Bool) -> String? {
-        let ns = s as NSString
-        guard let m = regex(p, multiline: multiline).firstMatch(in: s, range: NSRange(location: 0, length: ns.length))
-        else { return nil }
-        return ns.substring(with: m.range(at: 1))
-    }
 
-    private static func allGroups(_ p: String, in s: String) -> [String] {
-        let ns = s as NSString
-        return regex(p, multiline: true).matches(in: s, range: NSRange(location: 0, length: ns.length))
-            .map { ns.substring(with: $0.range(at: 1)) }
-    }
-}
-
-/// Screen points (fractions) the pointer passes through for one action.
-func pointerPath(_ act: JObject) -> [CGPoint] {
-    func n(_ k: String) -> Double { act[k]?.double ?? 0 }
-    func f(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x / 1000, y: y / 1000) }
-    switch act["action"]?.str {
-    case "tap": return [f(n("x"), n("y"))]
-    case "swipe": return [f(n("x1"), n("y1")), f(n("x2"), n("y2"))]
-    case "path": return points(act).map { f($0.x, $0.y) }
-    case "circle": return [f(n("x") + n("r"), n("y"))]
-    case "home": return [CGPoint(x: 0.5, y: 0.995), CGPoint(x: 0.5, y: 0.6)]
-    case "back": return [CGPoint(x: 0.005, y: 0.45), CGPoint(x: 0.6, y: 0.45)]
-    default: return []
-    }
 }
 
 /// The [[x, y], …] points of a path action, in 0-1000 units.

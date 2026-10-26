@@ -6,7 +6,7 @@ struct SavedTask: Codable, Identifiable, Equatable, Hashable {
     var name: String
     var prompt: String
     var icon: String?
-    var hints: [String]?     // checklist, appended to the actor prompt as hints when it runs
+    var hints: [String]?     // checklist, appended to the Midscene task as hints when it runs
     var refRun: String?      // the run it was made from
     var history: [RunStat]?  // its runs, newest last
 
@@ -101,14 +101,6 @@ struct Run: Identifiable, Equatable {
     let date: Date
     let steps: [Step]
 
-    /// The low-fps recording of the mirror stream (video/<ms>.jpg), if it was on.
-    var video: [(url: URL, t: Double)] {
-        let dir = folder.appendingPathComponent("video")
-        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        return files.compactMap { u in Double(u.deletingPathExtension().lastPathComponent).map { (u, $0 / 1000) } }
-            .sorted { $0.t < $1.t }
-    }
-
     var moves: [Step] { steps.filter(\.isMove) }
     /// From someone else's shared archive: replay only.
     var imported: Bool { RunShare.isImported(folder) }
@@ -117,7 +109,6 @@ struct Run: Identifiable, Equatable {
         Outcome(last: steps.last?.name, running: isActive)
     }
     var cover: URL? { steps.last(where: { $0.frame != nil })?.frame }
-    var firstFrame: URL? { steps.first(where: { $0.frame != nil })?.frame }
     var duration: Double? {
         guard let a = steps.first?.t, let b = steps.last?.t else { return nil }
         return max(0, b - a)
@@ -138,14 +129,33 @@ struct Run: Identifiable, Equatable {
     static func load(_ folder: URL) -> Run? {
         guard let text = try? String(contentsOf: folder.appendingPathComponent("steps.jsonl"), encoding: .utf8) else { return nil }
         var task = "", frame: URL?, steps: [Run.Step] = []
+        var report: JObject = [:]
         for line in text.split(separator: "\n") {
             guard let any = try? JSONSerialization.jsonObject(with: Data(line.utf8)),
                   case .obj(let rec) = PyJSON.from(any) else { continue }
             if let f = rec["frame"]?.str { frame = folder.appendingPathComponent(f) }
             switch rec["kind"]?.str {
             case "task": task = rec["task"]?.str ?? ""
-            case "step": steps.append(Run.Step(id: steps.count, action: rec.without(["n", "t", "kind", "frame"]), frame: frame,
+            case "progress":
+                if rec["phase"]?.str == "plan_thinking" { report = [:] }
+                if rec["phase"]?.str == "action_running" {
+                    report = rec.without(["n", "t", "kind", "phase", "sequence", "name"])
+                    report["sdkAction"] = rec["name"]
+                }
+            case "step":
+                let fields = rec.without(["n", "t", "kind", "frame"])
+                let action = fields["sdkAction"]?.str == report["sdkAction"]?.str && fields["sdkAction"] != nil
+                    ? report.merging(fields) : fields
+                report = [:]
+                steps.append(Run.Step(id: steps.count, action: action,
+                                               frame: rec["traceVersion"]?.int == 2 ? rec["frame"]?.str.map { folder.appendingPathComponent($0) } : frame,
                                                t: rec["t"]?.double))
+            case "step-update":
+                if let id = rec["id"]?.int, let i = steps.firstIndex(where: { $0.action["id"]?.int == id }) {
+                    let old = steps[i]
+                    steps[i] = Run.Step(id: old.id, action: old.action.merging(rec.without(["n", "t", "kind", "frame"])),
+                                        frame: old.frame, t: old.t)
+                }
             default: break
             }
         }
@@ -153,7 +163,7 @@ struct Run: Identifiable, Equatable {
         f.dateFormat = "yyyyMMdd-HHmmss"
         f.locale = Locale(identifier: "en_US_POSIX")
         return Run(id: folder.lastPathComponent, folder: folder, task: task,
-                   date: f.date(from: folder.lastPathComponent.replacingOccurrences(of: "imported-", with: "")) ?? Date(),
+                   date: f.date(from: String(folder.lastPathComponent.replacingOccurrences(of: "imported-", with: "").prefix(15))) ?? Date(),
                    steps: steps)
     }
 

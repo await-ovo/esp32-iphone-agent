@@ -1,16 +1,15 @@
-import Combine
 import Foundation
 import UIKit
 
 /// Working mode: Start → the character takes off → the phone goes to the Home Screen and the agent runs, with
-/// the Live Activity as its UI, a low-fps video of the mirror stream, "needs your help" pauses, notifications,
+/// the Live Activity as its UI, a lightweight step trace, "needs your help" pauses, notifications,
 /// and the review editor at the end.
 extension AppModel {
 
     var moveCount: Int { agent.steps.filter { !StepText.notMoves.contains($0["action"]?.str ?? "") }.count }
     var runID: String { traces.dir?.lastPathComponent ?? "" }
 
-    /// Start a task (or a saved intent: its checklist goes to the actor as hints).
+    /// Start a task (or a saved intent: its checklist goes to Midscene as hints).
     func run(_ task: String, intent: SavedTask? = nil) async {
         guard !startingAgent, !agent.running, !recorder.recording else { return }
         startingAgent = true
@@ -18,10 +17,9 @@ extension AppModel {
         currentIntent = intent
         lastTask = task
         agent.hints = intent?.checklist ?? []
-        departing = true
-        try? await Task.sleep(nanoseconds: 800_000_000)  // "See you later" (DepartureOverlay)
-        departing = false
-        await startAgent(task)
+        startingJob = Task { await startAgent(task) }
+        await startingJob?.value
+        startingJob = nil
     }
 
     func startAgent(_ task: String) async {
@@ -30,75 +28,76 @@ extension AppModel {
             say(String(localized: "Set up the model in Settings first."))
             return
         }
-        guard await calibrator.ensureCalibrated() else {
-            say(String(localized: "The pointer isn't calibrated yet."))
+        guard board.connected && board.status?.inputReady == true else {
+            say(String(localized: "Connect the mouse before starting."))
             return
         }
-        do {
-            agent.actor = try await settings.client("actor")
-            agent.planner = try await settings.client("planner")
-        } catch {
-            say("LLM: \(error.localizedDescription)")
-            return
-        }
-        // Start is tapped in this app, so: Live Activity, go Home, let the screen settle, THEN the first
-        // frame for the planner. Each sub-step is timed in the log.
         let t0 = now()
         func mark(_ what: String) { DebugLog.write(String(format: "start: %@ (+%.0f ms)", what, (now() - t0) * 1000)) }
-        traces.start(task: task)  // the run folder exists from here: a failed start keeps its log and video
-        startVideo()
-        FrameMode.fallback = nil  // each run starts in the chosen mode
-        let snapMode = FrameMode.current == .snap
-        live.start(task: task, runID: runID, limit: agent.maxSteps)
-        mark("Live Activity requested")
+        traces.start(task: task)
+        live.start(task: task, runID: runID)
+        live.show(.authorizing)
         do {
-            if snapMode {
-                if feed.streamOn { try await feed.stream(false) }
-                mark("snap-per-step mode (stream off)")
-            } else {
-                try await feed.stream(true)  // the agent waits for the screen to settle: it needs every change
-                mark("stream on")
+            // Each task owns a new consented capture session. Do not keep a diagnostic
+            // sharing session alive. Screen capture owns the background session.
+            await feed.stop()
+            guard await calibrator.ensureCalibrated() else { throw DeviceError(message: String(localized: "The pointer isn't calibrated yet.")) }
+            try Task.checkCancellation()
+            try await agent.prepare(settings)
+            try await feed.start()
+            mark("screen sharing ready")
+            // The system sharing panel may still cover the app after consent. Home
+            // dismisses it as part of leaving; no OCR or screen-coordinate click is needed.
+            if UIApplication.shared.applicationState == .active {
+                departing = true
+                do { try await Task.sleep(for: .milliseconds(800)) }
+                catch { departing = false; throw error }
+                departing = false
+                mark("departure animation finished")
             }
-            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "agent") { [weak self] in
-                self?.say("iOS is ending background time; BLE status keeps the run going")
-                self?.endBackgroundTask()
-            }
-            let left = now()
             var away = await leaveApp()
             if !away { away = await askUserToLeave() }
-            guard away else {  // never let the agent start on its own app
-                throw DeviceError(message: String(localized: "ESP32 Agent is still on screen"))
-            }
+            guard away else { throw DeviceError(message: String(localized: "ESP32 Agent is still on screen")) }
+            let left = now()
             mark("app in background")
-            if !snapMode {
-                let changed = await feed.fresh(since: left, timeout: 3) != nil
-                await feed.settled()
-                mark(changed ? "screen changed and settled" : "no screen change seen in 3 s; settled")
-            }
-            mark("first frame: " + (try await feed.currentFrame()))
+            live.show(.looking, mood: .thinking)
+            let waiting = now()
+            let snapshot = try await feed.snapshot(after: left, allowUnchanged: false)
+            let freshMs = (now() - waiting) * 1000
+            mark("fresh frame after departure")
+            DebugLog.write(String(format: "start: fresh frame wait %.0f ms, processing %.0f ms, frame age %.0f ms, JPEG %d bytes",
+                                  freshMs, snapshot.processingMs,
+                                  (snapshot.receivedAt - snapshot.capturedAt) * 1000, snapshot.jpeg.count))
+            let settling = await feed.settled()
+            mark("screen stability check finished")
+            traces.write(kind: "startup-timing", snapshot.metadata.merging(settling.metadata)
+                .merging(["freshFrameWaitMs": .num(freshMs)]))
+            try Task.checkCancellation()
             try agent.start(task, traceStarted: true)
             mark("agent started")
             say("started: \(task)")
             began(task, early: true)
         } catch {
+            departing = false
+            let cancelled = error is CancellationError || Task.isCancelled
             say("cannot start: \(error.localizedDescription)")
-            traces.write(feed.frame, kind: "step", ["action": .str("error"),
-                                                    "reason": .str("cannot start: \(error.localizedDescription)")])
-            videoSink = nil
-            saveVideoFrame(feed.frame)
-            videoDir = nil
-            live.end((.failure, String(localized: "Could not start")))
-            endBackgroundTask()
+            traces.write(feed.frame, kind: "step", ["action": .str(cancelled ? "stopped" : "error"),
+                                                    "reason": .str(cancelled ? "Start cancelled" : "cannot start: \(error.localizedDescription)")])
+            agent.close()
+            await feed.stop()
+            live.end((cancelled ? .idle : .failure, String(localized: "Could not start")))
             runs.reload()
-            runMood = .failure
-            notifier.post(.failed, title: String(localized: "Could not start"),
-                          body: error.localizedDescription, run: runID)
-            openReview(run: runID)
+            runMood = cancelled ? .idle : .failure
+            if !cancelled {
+                notifier.post(.failed, title: String(localized: "Could not start"), body: error.localizedDescription, run: runID)
+                openReview(run: runID)
+            }
         }
     }
 
     /// Emergency stop: cancel the agent and release the mouse button.
     func stopAgent() async {
+        startingJob?.cancel()
         answerHelp(.stop)
         mockJob?.cancel()
         agent.stop()
@@ -106,56 +105,44 @@ extension AppModel {
         if board.connected && !MockMode.on {
             do { try await pointer.reset() } catch { say("release failed: \(error.localizedDescription)") }
         }
+        await feed.stop()
     }
 
-    /// A run began: the character thinks, the Live Activity appears, the video starts.
-    /// early: the Live Activity and the video were started before the agent (a real run's start sequence).
+    /// A run began: the character thinks, the Live Activity appears, the trace starts.
+    /// early: the Live Activity and the trace were started before the agent (a real run's start sequence).
     func began(_ task: String, early: Bool = false) {
         moodReset?.cancel()
         runMood = .thinking
         runStarted = Date()
         if !early {
-            live.start(task: task, runID: runID, limit: agent.maxSteps)
-            if !MockMode.on { startVideo() }  // always: the review needs it, even for a run that stops at once
+            live.start(task: task, runID: runID)
         }
-        runs.reload()
+        // RunsView reloads on appearance; finishing reloads the completed trace.
+        // Avoid reading all history before the first model request can begin.
     }
 
     /// After each recorded step: a short "acting" hop, then back to thinking while the model looks again.
     func stepped() {
-        runs.reload()
+        // Agent state already supplies live progress. Disk history belongs to the
+        // Runs screen, not to action callbacks on the command dispatch path.
         guard agent.running, let last = agent.steps.last, help == nil else { return }
         let moved = !StepText.notMoves.contains(last["action"]?.str ?? "")
         runMood = moved ? .acting : .thinking
         live.update(mood: runMood ?? .thinking, step: moveCount, line: StepText.line(last), phase: .running)
-        if moved {
-            moodReset?.cancel()
-            moodReset = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 700_000_000)
-                guard !Task.isCancelled, self?.agent.running == true, self?.help == nil else { return }
-                self?.runMood = .thinking
-            }
-        }
     }
 
     /// Between steps: what the character says in the Dynamic Island and where its eyes go.
-    func doing(_ d: AgentLoop.Doing) {
-        guard agent.running, help == nil else { return }
+    func doing(_ d: MidsceneController.Doing) {
+        guard agent.running, help == nil, recovering == nil, !DeviceScreen.foreground, feed.live else { return }
         switch d {
         case .looking: live.show(.looking, mood: .thinking)
         case .waiting: live.show(.waiting, mood: .thinking)
-        case .planning: live.show(.planning, mood: .thinking)
-        case .thinking: live.show(.thinking, mood: .thinking)
-        case .retrying: live.show(.retrying, mood: .thinking)
-        case .acting(let act): live.show(.acting(act), mood: .acting)
+        case .progress(let status): live.show(status)
         }
     }
 
     /// The run ended: outcome on the character, Live Activity and a notification; then the review opens.
     func ended() {
-        videoSink = nil
-        saveVideoFrame(feed.frame)  // the last screen too, however the run ended
-        videoDir = nil
         help = nil
         takingOver = false
         recovering = nil
@@ -193,13 +180,6 @@ extension AppModel {
     func agentFinished() {
         ended()
         if let last = agent.steps.last { say("finished: \(last["action"]?.str ?? "") \(last["reason"]?.str ?? last["answer"]?.str ?? "")") }
-        Task { try? await feed.stream(false) }
-        endBackgroundTask()
-    }
-
-    func endBackgroundTask() {
-        if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
-        backgroundTask = .invalid
     }
 
     // MARK: - review
@@ -225,7 +205,7 @@ extension AppModel {
                      String(localized: "The + button is at the top right of Alarms"),
                      String(localized: "Check all seven days under Repeat, then tap Back")])
         }
-        let reply = try await settings.client("planner").chat(system: ReviewDraft.optimizerPrompt,
+        let reply = try await settings.client().chat(system: ReviewDraft.optimizerPrompt,
                                                               text: draft.optimizerInput(), image: nil,
                                                               maxTokens: 800, temperature: 0.2)
         guard let result = ReviewDraft.parseOptimized(reply.text) else {
@@ -237,16 +217,18 @@ extension AppModel {
     // MARK: - needs your help
 
     /// The agent is stuck: pause, tell the user (Live Activity + notification) and wait for their choice.
-    func needsHelp(_ reason: String) async -> AgentLoop.HelpChoice {
+    func needsHelp(_ reason: String) async -> MidsceneController.HelpChoice {
         help = reason.isEmpty ? String(localized: "I'm stuck on this step.") : reason
         runMood = .failure
         let line = String(localized: "Needs your help: \(help ?? "")")
         live.update(mood: .failure, step: moveCount, line: line, phase: .help, status: .help)
         notifier.post(.help, title: String(localized: "Needs your help"), body: help ?? "", run: runID)
-        return await withCheckedContinuation { helpWait = $0 }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { helpWait = $0 }
+        } onCancel: { Task { @MainActor in self.answerHelp(.stop) } }
     }
 
-    func answerHelp(_ choice: AgentLoop.HelpChoice) {
+    func answerHelp(_ choice: MidsceneController.HelpChoice) {
         guard let wait = helpWait else { return }
         resumeAsked = now()  // Continue tapped in this app: the run sends it away before looking again
         helpWait = nil
@@ -293,21 +275,4 @@ extension AppModel {
         }
     }
 
-    // MARK: - recording the run
-
-    /// Saves the mirror stream at ~2 fps into the run folder (video/<ms>.jpg), for the review's video view.
-    private func startVideo() {
-        guard let dir = traces.dir?.appendingPathComponent("video") else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        videoDir = dir
-        videoSink = feed.$frame.compactMap { $0 }
-            .throttle(for: .milliseconds(500), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] jpeg in self?.saveVideoFrame(jpeg) }
-    }
-
-    /// Each frame is written at once, so a run that stops or fails early still has its video.
-    func saveVideoFrame(_ jpeg: Data?) {
-        guard let jpeg, let dir = videoDir else { return }
-        try? jpeg.write(to: dir.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000)).jpg"))
-    }
 }

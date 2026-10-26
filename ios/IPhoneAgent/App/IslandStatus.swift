@@ -1,9 +1,8 @@
 import Foundation
 
-/// What the character says in the Dynamic Island, first person: "Thinking…", "Tapping Clock", "Typing 0800",
-/// "Done!". `short` fits the compact island (≤ ~16 characters), `full` is for the expanded island and the
-/// Lock Screen. `look` is where the eyes go (-1...1 from the center, e.g. toward a tap); nil while it waits,
-/// when the eyes dart around on their own.
+/// Live progress for the Dynamic Island. SDK action names remain verbatim; native screen reads
+/// use Screenshot. Minimal labels shorten long names to leave room for the app icon.
+/// `look` is retained for the app's character views and waiting timer state.
 struct IslandStatus: Equatable {
     var short: String
     var full: String
@@ -14,6 +13,50 @@ struct IslandStatus: Equatable {
 
     static let compactLimit = 16
 
+    static var authorizing: Self {
+        Self(short: String(localized: "Allow sharing"), full: String(localized: "Allow screen sharing in the system picker"), look: nil, minimal: String(localized: "Allow"))
+    }
+
+    static var captureStopped: Self {
+        Self(short: String(localized: "Screen offline"), full: String(localized: "Open the app to restart screen sharing"), look: nil, minimal: String(localized: "Screen"))
+    }
+
+    /// Midscene's structured event is the source of truth; a planned action is not yet executing.
+    static func progress(_ event: [String: Any]) -> Self? {
+        switch event["phase"] as? String {
+        case "start": return .looking
+        case "plan_thinking": return .planning
+        case "plan_planned":
+            let detail = event["text"] as? String ?? ""
+            return Self(short: "Plan", full: detail.isEmpty ? "Plan" : "Plan · \(clip(detail, 120))", look: .zero, minimal: "Plan")
+        case "plan_action":
+            let name = (event["action"] as? [String: Any])?["name"] as? String ?? "Action"
+            return Self(short: clip("Next: \(name)", compactLimit), full: "aiAct → \(name) · pending", look: nil, minimal: "Next")
+        case "action_running", "action_done", "action_failed":
+            guard let action = event["action"] as? [String: Any], let name = action["name"] as? String, !name.isEmpty else { return nil }
+            let target = action["target"] as? String ?? ""
+            let phase = event["phase"] as? String
+            let suffix = phase == "action_done" ? " · finished" : phase == "action_failed" ? " · failed" : ""
+            let detail = target.isEmpty ? "" : " · \(clip(target, 100))"
+            return Self(short: clip(name, compactLimit), full: "aiAct → \(name)\(suffix)\(detail)", look: .zero, minimal: minimalAction(name))
+        case "plan_failed": return Self(short: "Plan failed", full: "Plan · failed", look: .zero, minimal: "Plan")
+        // Final outcomes are published after Swift has recorded the result and released inputs.
+        default: return nil
+        }
+    }
+
+    private static func minimalAction(_ name: String) -> String {
+        switch name {
+        case "Tap", "Input", "Swipe", "Scroll", "Home", "Back": return name
+        case "LongPress": return "Hold"
+        case "KeyboardPress": return "Key"
+        case "ClearInput": return "Clear"
+        case "DrawPath": return "Draw"
+        case "Sleep": return "Wait"
+        default: return "Act"
+        }
+    }
+
     static var pausedInApp: Self {
         Self(short: String(localized: "Paused"),
              full: String(localized: "Paused while you're here. Go to the Home Screen and I'll go on."),
@@ -21,11 +64,7 @@ struct IslandStatus: Equatable {
     }
 
     static var looking: Self {
-        Self(short: String(localized: "Looking…"), full: String(localized: "Looking at the screen…"), look: nil, minimal: String(localized: "Look"))
-    }
-
-    static var thinking: Self {
-        Self(short: String(localized: "Thinking…"), full: String(localized: "Thinking about my next move…"), look: nil, minimal: String(localized: "Think"))
+        Self(short: "Screenshot", full: "Screenshot", look: nil, minimal: "Look")
     }
 
     static var waiting: Self {
@@ -34,12 +73,7 @@ struct IslandStatus: Equatable {
     }
 
     static var planning: Self {
-        Self(short: String(localized: "Planning…"), full: String(localized: "Thinking through my plan…"),
-             look: nil, minimal: String(localized: "Plan"))
-    }
-
-    static var retrying: Self {
-        Self(short: String(localized: "Retrying…"), full: String(localized: "The model timed out. Trying once more…"), look: nil, minimal: String(localized: "Retry"))
+        Self(short: "Plan", full: "aiAct → Plan", look: nil, minimal: "Plan")
     }
 
     static var help: Self {
@@ -59,86 +93,9 @@ struct IslandStatus: Equatable {
         }
     }
 
-    /// About to do `act` (its thought, if any, names the target: "… so I tap the Clock app").
-    static func acting(_ act: JObject) -> Self {
-        let look = gaze(act)
-        let minimal: String
-        switch act["action"]?.str {
-        case "tap": minimal = String(localized: "Tap")
-        case "type": minimal = String(localized: "Type")
-        case "key": minimal = String(localized: "Key")
-        case "swipe": minimal = String(localized: "Swipe")
-        case "path", "circle": minimal = String(localized: "Draw")
-        case "home": minimal = String(localized: "Home")
-        case "back": minimal = String(localized: "Back")
-        default: minimal = String(localized: "Wait")
-        }
-        func say(_ verb: (String) -> String, _ bare: String, _ what: String?) -> Self {
-            guard let what, !what.isEmpty else { return Self(short: bare, full: bare, look: look, minimal: minimal) }
-            let room = compactLimit - verb("").count
-            return Self(short: verb(clip(what, room)), full: verb(clip(what, 28)), look: look, minimal: minimal)
-        }
-        switch act["action"]?.str {
-        case "tap":
-            return say({ String(localized: "Tapping \($0)") }, String(localized: "Tapping…"), target(act["thought"]?.str ?? ""))
-        case "type":
-            return say({ String(localized: "Typing \($0)") }, String(localized: "Typing…"), act["text"]?.str)
-        case "key":
-            return say({ String(localized: "Pressing \($0)") }, String(localized: "Pressing a key…"), act["combo"]?.str)
-        case "swipe":
-            let label: String
-            if abs(look.x) > abs(look.y) {
-                label = look.x > 0 ? String(localized: "Swiping right") : String(localized: "Swiping left")
-            } else {
-                label = look.y > 0 ? String(localized: "Swiping down") : String(localized: "Swiping up")
-            }
-            return Self(short: label, full: label, look: look, minimal: minimal)
-        case "path", "circle":
-            return Self(short: String(localized: "Drawing…"), full: String(localized: "Drawing…"), look: look, minimal: minimal)
-        case "home":
-            return Self(short: String(localized: "Going home"), full: String(localized: "Going to the Home Screen"), look: look, minimal: minimal)
-        case "back":
-            return Self(short: String(localized: "Going back"), full: String(localized: "Going back"), look: look, minimal: minimal)
-        default:
-            return Self(short: String(localized: "Waiting…"), full: String(localized: "Waiting for the screen…"), look: nil, minimal: minimal)
-        }
+    private static func clip(_ text: String, _ limit: Int) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.count <= limit ? text : String(text.prefix(max(1, limit - 1))) + "…"
     }
 
-    /// Where the pointer is going, relative to the screen center; typing looks down at the keyboard.
-    static func gaze(_ act: JObject) -> CGPoint {
-        if ["type", "key"].contains(act["action"]?.str ?? "") { return CGPoint(x: 0, y: 0.7) }
-        if act["action"]?.str == "swipe" {
-            let dx = (act["x2"]?.double ?? 0) - (act["x1"]?.double ?? 0)
-            let dy = (act["y2"]?.double ?? 0) - (act["y1"]?.double ?? 0)
-            let magnitude = max(abs(dx), abs(dy), 1)
-            return CGPoint(x: dx / magnitude, y: dy / magnitude)
-        }
-        guard let p = pointerPath(act).last else { return .zero }
-        func clamp(_ v: Double) -> Double { min(1, max(-1, (v - 0.5) * 2)) }
-        return CGPoint(x: clamp(p.x), y: clamp(p.y))
-    }
-
-    /// The thing a thought says it taps: a quoted name ("Save", “Repeat”), else the words after the last
-    /// "tap / open / press / select …" ("so I tap the Clock app" → "Clock"). Nil for "it", "here" and the like.
-    static func target(_ thought: String) -> String? {
-        if let quoted = lastMatch(#"[“"‘]([^“”"‘’]{1,24})[”"’]"#, in: thought) { return quoted }
-        let verb = #"\b(?:tap|tapping|open|opening|press|select|choose|hit)\s+(?:on\s+)?(?:the\s+)?"#
-        let stop = #"(?=\s+(?:app|icon|button|tab|field|row|toggle|option|pill|key|link|result|to|so|and|in|at|on|again)\b|[.,;:!]|$)"#
-        guard let name = lastMatch(verb + #"([^.,;:!]{1,24}?)"# + stop, in: thought, options: .caseInsensitive) else { return nil }
-        let pronouns: Set<String> = ["it", "this", "that", "them", "here", "there", "one", "a", "an"]
-        return pronouns.contains(name.lowercased()) ? nil : name
-    }
-
-    private static func clip(_ s: String, _ n: Int) -> String {
-        let s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        return s.count <= n ? s : String(s.prefix(max(1, n - 1))) + "…"
-    }
-
-    private static func lastMatch(_ pattern: String, in s: String, options: NSRegularExpression.Options = []) -> String? {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
-        let ns = s as NSString
-        guard let m = re.matches(in: s, range: NSRange(location: 0, length: ns.length)).last else { return nil }
-        let found = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
-        return found.isEmpty ? nil : found
-    }
 }

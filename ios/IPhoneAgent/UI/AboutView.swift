@@ -120,10 +120,9 @@ struct CommunityRow: View {
 
 struct AcknowledgementsView: View {
     private let items: [(name: String, license: String, note: LocalizedStringKey)] = [
-        ("UxPlay", "GPL-3.0", "The board's AirPlay receiver is ported from UxPlay."),
         ("Arduino-ESP32 / ESP-IDF", "LGPL-2.1 / Apache-2.0", "Espressif's frameworks for the board firmware."),
+        ("Midscene", "MIT", "Plans and executes tasks from screenshots."),
         ("NimBLE", "Apache-2.0", "The board's Bluetooth LE stack."),
-        ("TinyUSB", "MIT", "The board's USB mouse and keyboard."),
     ]
 
     var body: some View {
@@ -180,7 +179,7 @@ struct LogsView: View {
                     ShareLink(item: DebugLog.url) { Label("Share debug log", systemImage: "doc.text.magnifyingglass") }
                 }
             } footer: {
-                Text("A zip of debug.log, crash reports from iOS and every run (steps, model replies, screenshots, video). Your API key is never in it.")
+                Text("A zip of debug.log, crash reports from iOS and every run (steps, model replies, screenshots). Your API key is never in it.")
             }
             if app.log.isEmpty {
                 Text("Nothing logged yet.").foregroundStyle(.secondary)

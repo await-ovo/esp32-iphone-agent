@@ -3,41 +3,51 @@ import XCTest
 
 /// What the character says in the Dynamic Island, and where its eyes go.
 @MainActor final class IslandTests: XCTestCase {
-    func testSwipeGazeUsesDirectionRatherThanScreenPosition() {
-        let right: JObject = ["action": .str("swipe"), "x1": .int(100), "x2": .int(200), "y1": .int(200), "y2": .int(200)]
-        XCTAssertEqual(IslandStatus.acting(right).short, "Swiping right")
-        XCTAssertEqual(IslandStatus.gaze(right), CGPoint(x: 1, y: 0))
-        let up: JObject = ["action": .str("swipe"), "x1": .int(800), "x2": .int(800), "y1": .int(900), "y2": .int(700)]
-        XCTAssertEqual(IslandStatus.acting(up).short, "Swiping up")
-        XCTAssertEqual(IslandStatus.gaze(up), CGPoint(x: 0, y: -1))
+    func testDemoUsesMidsceneActionPayloadsAndStatusLabels() throws {
+        let plan = try XCTUnwrap(IslandStatus.progress(["phase": "plan_thinking"]))
+        XCTAssertEqual(plan.minimal, "Plan")
+        XCTAssertTrue(plan.waits)
+        for step in AppModel.mockSteps {
+            guard !StepText.notMoves.contains(step["action"]?.str ?? "") else { continue }
+            let action = try XCTUnwrap(MockMode.action(step))
+            let status = try XCTUnwrap(IslandStatus.progress(["phase": "action_running", "action": action]))
+            XCTAssertEqual(status.short, action["name"] as? String)
+            XCTAssertFalse(status.waits)
+            if step["action"]?.str == "type" {
+                XCTAssertEqual(status.minimal, "Input")
+                XCTAssertEqual((action["param"] as? [String: String])?["value"], step["text"]?.str)
+            }
+        }
+        XCTAssertNil(MockMode.action(["action": .str("done")]))
     }
 
-    func testMinimalTextKeepsPendingPlanningThinkingAndRetryDistinct() {
-        let states = [IslandStatus.waiting, .planning, .thinking, .retrying]
-        XCTAssertEqual(states.compactMap(\.minimal), ["Wait", "Plan", "Think", "Retry"])
-        XCTAssertTrue(states.allSatisfy(\.waits))
-        XCTAssertEqual(IslandStatus.acting(["action": .str("swipe")]).minimal, "Swipe")
-        XCTAssertEqual(IslandStatus.acting(["action": .str("wait")]).minimal, "Wait")
+    func testMidscenePlannedActionsAreNotDisplayedAsExecuting() {
+        XCTAssertEqual(IslandStatus.progress(["phase": "plan_action", "action": ["name": "Tap", "target": "Settings"]])?.minimal, "Next")
+        XCTAssertEqual(IslandStatus.progress(["phase": "action_running", "action": ["name": "Tap", "target": "Settings"]])?.full, "aiAct → Tap · Settings")
+        XCTAssertNil(IslandStatus.progress(["phase": "complete"]))
     }
 
-    func testTargetFromThought() {
-        XCTAssertEqual(IslandStatus.target("I am on the home screen. I tap the Search pill to find Clock."), "Search")
-        XCTAssertEqual(IslandStatus.target("My last tap opened Alarms. I tap + to add an alarm."), "+")
-        XCTAssertEqual(IslandStatus.target("The time is 08:00. I open Repeat."), "Repeat")
-        XCTAssertEqual(IslandStatus.target("I tap “Save” at the top right."), "Save")
-        XCTAssertNil(IslandStatus.target("Clock is the top result, so I open it."))
+    func testMinimalNamesLeaveRoomForIconAndExpandedNamesStayVerbatim() {
+        for (name, minimal) in ["Tap": "Tap", "Input": "Input", "Swipe": "Swipe", "Scroll": "Scroll", "Home": "Home", "KeyboardPress": "Key", "ClearInput": "Clear", "Sleep": "Wait", "LongPress": "Hold", "DrawPath": "Draw", "FutureAction": "Act"] {
+            let state = IslandStatus.progress(["phase": "action_running", "action": ["name": name]])
+            XCTAssertEqual(state?.short, name)
+            XCTAssertEqual(state?.minimal, minimal)
+            XCTAssertEqual(state?.full, "aiAct → " + name)
+        }
+        XCTAssertEqual(IslandStatus.looking.short, "Screenshot")
+        XCTAssertEqual(IslandStatus.looking.minimal, "Look")
+        XCTAssertEqual(IslandStatus.planning.short, "Plan")
+        XCTAssertEqual(IslandStatus.progress(["phase": "action_done", "action": ["name": "Tap"]])?.full, "aiAct → Tap · finished")
+        XCTAssertEqual(IslandStatus.progress(["phase": "action_failed", "action": ["name": "Tap"]])?.full, "aiAct → Tap · failed")
     }
 
-    func testLabelsFitTheCompactIsland() {
-        let tap: JObject = ["thought": .str("I tap the Clock app."), "action": .str("tap"), "x": .int(900), "y": .int(100)]
-        let s = IslandStatus.acting(tap)
-        XCTAssertEqual(s.full, "Tapping Clock")
-        XCTAssertLessThanOrEqual(s.short.count, IslandStatus.compactLimit)
-        XCTAssertEqual(s.look!.x, 0.8, accuracy: 0.001)
-        XCTAssertEqual(s.look!.y, -0.8, accuracy: 0.001)
-        let long = IslandStatus.acting(["action": .str("type"), "text": .str("Set an alarm for eight o'clock")])
-        XCTAssertLessThanOrEqual(long.short.count, IslandStatus.compactLimit)
-        XCTAssertEqual(IslandStatus.acting(["action": .str("type"), "text": .str("0800")]).short, "Typing 0800")
-        XCTAssertTrue(IslandStatus.thinking.waits)
+    func testActivityIconAssetsHavePresentationSizedLogicalDimensions() throws {
+        let plugins = try XCTUnwrap(Bundle.main.builtInPlugInsURL)
+        let bundle = try XCTUnwrap(Bundle(url: plugins.appendingPathComponent("AgentActivity.appex")))
+        let image = try XCTUnwrap(UIImage(named: "ActivityIcon44", in: bundle, compatibleWith: nil))
+        XCTAssertEqual(image.size, CGSize(width: 44, height: 44))
+        XCTAssertEqual(image.scale, 3)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(image.cgImage).width, 132)
     }
+
 }

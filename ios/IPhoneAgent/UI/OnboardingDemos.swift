@@ -3,10 +3,9 @@ import SwiftUI
 /// A looping mini-iPhone that shows where to tap for a system setting, with a finger and a caption.
 /// Under Reduce Motion the frames cross-fade instead of moving.
 struct MiniPhoneDemo: View {
-    enum Kind { case plugIn, wifi, controlCenter, assistiveTouch }
+    enum Kind { case plugIn, assistiveTouch }
 
     let kind: Kind
-    var ssid = "ESP32Agent-7C3E"
     @State private var frame = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,13 +15,6 @@ struct MiniPhoneDemo: View {
             return [("Plug the board into the USB-C port", nil), ("Plug the board into the USB-C port", nil),
                     ("Tap Pair when iOS asks", CGPoint(x: 0.68, y: 0.56)),
                     ("No antenna? Keep it right beside your phone", nil)]
-        case .wifi:
-            return [("Open Settings › Wi-Fi", CGPoint(x: 0.5, y: 0.3)), ("Choose the board's network", CGPoint(x: 0.5, y: 0.42)),
-                    ("Paste the password, then Join", CGPoint(x: 0.84, y: 0.13))]
-        case .controlCenter:
-            return [("Swipe down from the top-right corner", CGPoint(x: 0.85, y: 0.04)),
-                    ("Swipe down from the top-right corner", CGPoint(x: 0.85, y: 0.36)),
-                    ("Tap Screen Mirroring", CGPoint(x: 0.3, y: 0.42)), ("Choose “ESP32 Agent”", CGPoint(x: 0.5, y: 0.43))]
         case .assistiveTouch:
             return [("Settings › Accessibility", CGPoint(x: 0.5, y: 0.42)), ("Touch", CGPoint(x: 0.5, y: 0.22)),
                     ("AssistiveTouch", CGPoint(x: 0.5, y: 0.22)), ("Turn AssistiveTouch on", CGPoint(x: 0.84, y: 0.22))]
@@ -80,14 +72,6 @@ struct MiniPhoneDemo: View {
     @ViewBuilder private var screen: some View {
         switch kind {
         case .plugIn: plugIn
-        case .wifi:
-            switch frame {
-            case 0: MiniList(title: "Settings", rows: ["Airplane Mode", "Wi-Fi", "Bluetooth", "Cellular"], hot: 1)
-            case 1: MiniList(title: "Wi-Fi", rows: ["Home", LocalizedStringKey(stringLiteral: ssid), "Office"], hot: 1)
-            default: MiniList(title: LocalizedStringKey(stringLiteral: ssid), rows: ["Password", "••••••••"], hot: 1,
-                              action: "Join")
-            }
-        case .controlCenter: controlCenter
         case .assistiveTouch:
             switch frame {
             case 0: MiniList(title: "Settings", rows: ["General", "Display", "Accessibility", "Privacy"], hot: 2)
@@ -127,59 +111,7 @@ struct MiniPhoneDemo: View {
         }
     }
 
-    private var controlCenter: some View {
-        ZStack(alignment: .top) {
-            HomeGrid()
-            if frame >= 1 {
-                Color.black.opacity(0.35)
-                VStack(spacing: 6) {
-                    HStack(spacing: 6) {
-                        tile(nil, "airplane").frame(height: 34)
-                        tile(nil, "wifi").frame(height: 34)
-                    }
-                    HStack(spacing: 6) {
-                        tile("Screen Mirroring", "rectangle.on.rectangle", hot: frame == 2).frame(height: 34)
-                        tile(nil, "flashlight.off.fill").frame(height: 34)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 30)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-            if frame == 3 {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Screen Mirroring").font(.system(size: 9, weight: .bold))
-                    HStack {
-                        Image(systemName: "appletv").font(.system(size: 8))
-                        Text(verbatim: "Living Room").font(.system(size: 8))
-                    }
-                    .foregroundStyle(.secondary)
-                    HStack {
-                        Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
-                        Text(verbatim: "ESP32 Agent").font(.system(size: 8, weight: .semibold))
-                    }
-                    .padding(5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.3)))
-                }
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 12).fill(.regularMaterial))
-                .padding(.horizontal, 10)
-                .padding(.top, 90)
-                .transition(.scale(scale: 0.9).combined(with: .opacity))
-            }
-        }
-    }
 
-    private func tile(_ title: LocalizedStringKey?, _ symbol: String, hot: Bool = false) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
-            if let title { Text(title).font(.system(size: 6, weight: .semibold)).lineLimit(2) }
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(RoundedRectangle(cornerRadius: 9).fill(hot ? Color.accentColor : Color.white.opacity(0.22)))
-    }
 }
 
 /// A phone outline with a Dynamic Island; the content is its screen.

@@ -7,7 +7,6 @@ __pycache__/
 
 # Local config and secrets
 .env
-hardware/hid_bridge/secrets.h
 
 # Build output
 hardware/build/
@@ -21,4 +20,7 @@ hardware/hid_bridge/build/
 # Host test output
 hardware/tests/test
 hardware/tests/test.dSYM/
+hardware/tests/test_hid
+hardware/tests/test_hid.dSYM/
+hardware/tests/report.o
 hardware/tools/out/

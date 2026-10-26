@@ -10,16 +10,15 @@ struct AgentActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var mood: Mood
         var step: Int       // actions done
-        var limit: Int      // the step limit of a run
         var line: String    // what it does now, one line
         var finished = false
         var phase = Phase.running
         var since = Date()  // recording start, for the timer
-        var label = ""      // what the character says, compact island ("Thinking…", "Tapping Clock")
+        var label = ""      // what the character says, compact island ("Plan", "Tap")
         var labelFull = ""  // the same, longer, for the expanded island and the Lock Screen
         var minimalLabel: String?  // explicit phase, not inferred from the face
         var waitingSince: Date?  // system-rendered elapsed timer, even between app updates
-        var lookX = 0.0     // where the eyes look, -1...1 (darting while it waits, toward the pointer's target)
+        var lookX = 0.0     // where the eyes look, -1...1 (darting while it waits)
         var lookY = 0.0
 
         var look: CGPoint { CGPoint(x: lookX, y: lookY) }

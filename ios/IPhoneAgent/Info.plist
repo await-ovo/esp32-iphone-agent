@@ -62,12 +62,15 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>ESP32 Agent talks to its USB board over Bluetooth to see the screen and move the pointer.</string>
+	<string>ESP32 Agent connects to its Bluetooth mouse and keyboard to operate this iPhone.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Share this iPhone screen so the agent can see and carry out your task.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>screen-capture</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>

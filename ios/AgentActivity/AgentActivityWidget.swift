@@ -13,7 +13,7 @@ struct AgentActivityBundle: WidgetBundle {
     }
 }
 
-/// The Live Activity and Dynamic Island: running (eyes, "3/12", current step, Stop), needs help
+/// The Live Activity and Dynamic Island: running (app icon, action count, SDK step, Stop), needs help
 /// (Continue / Skip / Stop) and recording a demonstration (red dot, timer, Stop).
 struct AgentLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -26,7 +26,7 @@ struct AgentLiveActivity: Widget {
             let s = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Eyes(state: s).frame(width: 44, height: 44).padding(.leading, 4)
+                    AgentIcon(size: 36).padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Counter(state: s).font(.headline).padding(.trailing, 4)
@@ -44,9 +44,6 @@ struct AgentLiveActivity: Widget {
                         if s.line != s.labelFull && (s.phase != .running || s.finished) {
                             Text(verbatim: s.line).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                         }
-                        if s.phase == .running {
-                            ProgressView(value: Double(min(s.step, s.limit)), total: Double(max(s.limit, 1))).tint(.white)
-                        }
                         if !s.finished { Buttons(state: s) }
                     }
                 }
@@ -54,7 +51,7 @@ struct AgentLiveActivity: Widget {
                 if s.phase == .recording {
                     Image(systemName: "record.circle.fill").foregroundStyle(.red)
                 } else {
-                    Eyes(state: s).frame(width: 24, height: 24)
+                    Eyes(state: s).frame(width: 18, height: 18)
                 }
             } compactTrailing: {
                 if s.phase == .recording && !s.finished {
@@ -66,15 +63,16 @@ struct AgentLiveActivity: Widget {
                 if s.phase == .recording {
                     Image(systemName: "record.circle.fill").foregroundStyle(.red)
                 } else {
-                    // Minimal presentation is the primary surface while Screen Mirroring is active.
-                    // Keep it text-only: the former face-over-label layout was too small to read,
-                    // and idle gaze updates caused distracting system refresh transitions.
-                    // Eyes remains below for compact/expanded presentations and future reuse.
-                    Text(verbatim: s.minimalLabel ?? s.label)
-                        .font(.caption2.bold()).foregroundStyle(.white)
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                        .frame(width: 36, height: 24)
-                        .accessibilityLabel(Text(verbatim: s.labelFull))
+                    HStack(spacing: 1) {
+                        Eyes(state: s).frame(width: 18, height: 18)
+                        Text(verbatim: s.minimalLabel ?? s.label)
+                            .font(.system(size: 8.5, weight: .semibold)).fontWidth(.condensed)
+                            .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.65)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .frame(width: 36, height: 20)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(verbatim: "ESP32 Agent · " + s.labelFull))
                 }
             }
             .widgetURL(AgentActivityAttributes.url(run: context.attributes.runID))
@@ -83,7 +81,7 @@ struct AgentLiveActivity: Widget {
     }
 }
 
-/// "3/12" while running, the elapsed time while recording.
+/// Completed action count while running, elapsed time while recording.
 private struct Counter: View {
     let state: AgentActivityAttributes.ContentState
     var body: some View {
@@ -91,7 +89,7 @@ private struct Counter: View {
             Text(timerInterval: state.since...Date.distantFuture, countsDown: false)
                 .monospacedDigit().foregroundStyle(.red).multilineTextAlignment(.trailing)
         } else {
-            Text(verbatim: "\(state.step)/\(state.limit)").monospacedDigit().foregroundStyle(.secondary)
+            Text("\(state.step) actions").monospacedDigit().foregroundStyle(.secondary)
         }
     }
 }
@@ -121,9 +119,8 @@ private struct Buttons: View {
     }
 }
 
-/// The character's face without the USB tab. Widgets do not animate on their own, but a change of `look`
-/// between action updates springs toward the gesture's target before the pointer moves.
-/// Random idle gaze updates are disabled for the text-only minimal presentation.
+/// The character's face without the USB tab. Waiting updates move its eyes;
+/// the view interpolates each gaze change without changing the surrounding layout.
 private struct Eyes: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let state: AgentActivityAttributes.ContentState
@@ -133,7 +130,7 @@ private struct Eyes: View {
     }
 }
 
-/// What the character says ("Thinking…", "Tapping Clock", "Done!"), colored by how things stand.
+/// The current step or outcome, colored by how things stand.
 private struct Says: View {
     let state: AgentActivityAttributes.ContentState
     let full: Bool
@@ -163,7 +160,7 @@ private struct LockScreenView: View {
             if s.phase == .recording && !s.finished {
                 Image(systemName: "record.circle.fill").font(.system(size: 40)).foregroundStyle(.red).frame(width: 52)
             } else {
-                Eyes(state: s).frame(width: 52, height: 52)
+                AgentIcon(size: 44).frame(width: 52)
             }
             VStack(alignment: .leading, spacing: 6) {
                 if let name = context.attributes.name {
@@ -185,14 +182,24 @@ private struct LockScreenView: View {
                           systemImage: s.mood == .success ? "checkmark.circle.fill" : "play.circle")
                         .font(.footnote.weight(.semibold))
                 } else {
-                    if s.phase == .running {
-                        ProgressView(value: Double(min(s.step, s.limit)), total: Double(max(s.limit, 1))).tint(.white)
-                    }
                     Buttons(state: s).controlSize(.small)
                 }
             }
         }
         .foregroundStyle(.white)
         .padding(16)
+    }
+}
+
+
+/// The same icon as the app, bundled in the extension so it works without launching the app.
+private struct AgentIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image("ActivityIcon44").renderingMode(.original).resizable().scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            .accessibilityHidden(true)
     }
 }

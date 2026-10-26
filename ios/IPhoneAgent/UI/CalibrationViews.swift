@@ -24,7 +24,7 @@ struct CalibrationText: View {
 }
 
 /// A round Calibrate button under the record button, shown only when calibration is due and the mouse and
-/// mirroring are up; it wiggles every few seconds. The first time, a small hint says why. Tapping it opens
+/// screen sharing are up; it wiggles every few seconds. The first time, a small hint says why. Tapping it opens
 /// the calibration board.
 struct CalibrateButton: View {
     @ObservedObject var calibrator: AutoCalibrator
@@ -71,7 +71,7 @@ struct CalibrateButton: View {
                     }
                 }
                 .accessibilityLabel(Text("Calibrate"))
-                .accessibilityHint(Text("Calibrates the pointer on a grid; takes a few seconds."))
+                    .accessibilityHint(Text("Calibrates the pointer on a grid and checks accuracy across the screen."))
             }
             .task {
                 while !Task.isCancelled {

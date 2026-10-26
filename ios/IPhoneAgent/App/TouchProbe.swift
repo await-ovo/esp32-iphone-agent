@@ -3,7 +3,7 @@ import UIKit
 
 /// Catches the board's clicks on this app's own screen during calibration. While `capturing`, the
 /// calibration board (white, gridded, above sheets and covers too) swallows every touch except its Back
-/// button, so a probe click never presses a control underneath; otherwise only the toast takes touches.
+/// button, so a probe click never presses a control underneath. Outside calibration, touches pass through.
 @MainActor final class TouchProbe: ObservableObject {
     @Published private(set) var capturing = false
     /// Recent hits (screen fractions) for the faint flash on the grid.
@@ -24,8 +24,6 @@ import UIKit
         window = w
     }
 
-    /// Where the toast is (window coordinates); only that area takes touches when not capturing.
-    func setInteractive(_ rect: CGRect) { window?.interactive = rect }
     /// The calibration board's buttons: the only places that take touches while capturing.
     func setButtonArea(_ id: String, _ rect: CGRect?) { window?.buttons[id] = rect }
 
@@ -66,11 +64,10 @@ import UIKit
     }
 }
 
-/// Passes touches through, except on the toast; while capturing, everything lands on the catcher.
+/// Passes touches through outside calibration; while capturing, everything lands on the catcher.
 final class OverlayWindow: UIWindow {
     let catcher = TouchCatcher()
     var capturing = false
-    var interactive = CGRect.zero
     var buttons: [String: CGRect] = [:]
 
     override init(windowScene: UIWindowScene) {
@@ -87,8 +84,7 @@ final class OverlayWindow: UIWindow {
         if capturing {
             return buttons.values.contains { $0.contains(point) } ? super.hitTest(point, with: event) : catcher
         }
-        guard interactive.contains(point) else { return nil }
-        return super.hitTest(point, with: event)
+        return nil
     }
 }
 

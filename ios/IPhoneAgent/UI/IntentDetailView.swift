@@ -94,7 +94,7 @@ struct RecordSheet: View {
                         option("Record me doing it", "record.circle.fill", .red,
                                "Do the task yourself. I watch the mirrored screen and write the steps down.")
                     }
-                    .disabled(!(app.board.connected && app.board.status?.ap == "streaming") || app.agent.running)
+                    .disabled(!(app.board.connected) || app.agent.running)
                     Button {
                         guard let last = app.runs.runs.first else { return }
                         dismiss()

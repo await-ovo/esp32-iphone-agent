@@ -1,26 +1,21 @@
 #!/usr/bin/env bash
 # Build and flash the board (needs arduino-cli and the esp32 core 3.3.x).
-# Usage: hardware/flash.sh [port] [--debug] [--sta] [--build-only]
-#   --debug       log commands and the AirPlay handshake on USB serial
-#   --sta         test build: join the Wi-Fi in hid_bridge/secrets.h instead of opening a hotspot
+# Usage: hardware/flash.sh [port] [--debug] [--build-only]
+#   --debug       log commands on UART at 115200 baud
 #   --build-only  compile only (prints flash/RAM usage)
-#   --ap-tune     A/B build: hotspot on a 20 MHz channel with 300 TU beacons (more airtime for BLE)
 # BLE host: h2zero NimBLE-Arduino (arduino-cli lib install "NimBLE-Arduino"); its buffer sizes live in
 # hid_bridge/nimble_cfg.h, force-included into every C/C++ file below.
-# A running bridge is a TinyUSB device, so it is first kicked into the ROM
-# bootloader with a 1200-baud touch; a blank board is flashed directly.
+# This N16R8 board is flashed through USB-to-UART; esptool handles the bootloader reset.
 set -euo pipefail
 cd "$(dirname "$0")"
-FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=cdc,FlashSize=8M,PSRAM=opi,PartitionScheme=default_8MB"
+FQBN="esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,PSRAM=opi,PartitionScheme=default_8MB"
 port() { for p in /dev/cu.usbmodem* /dev/ttyACM*; do [[ -e $p ]] && { echo "$p"; return; }; done; }
 PORT="" DEFS="" BUILD_ONLY=0
 for a in "$@"; do
   case $a in
     --debug) DEFS+=" -DDEBUG_SERIAL=1" ;;
-    --sta) [[ -f hid_bridge/secrets.h ]] || { echo "--sta needs hid_bridge/secrets.h (see secrets.example.h)"; exit 1; }
-           DEFS+=" -DSTA_FROM_SECRETS=1" ;;
     --build-only) BUILD_ONLY=1 ;;
-    --ap-tune) DEFS+=" -DAP_TUNE=1" ;;
+    --*) echo "unknown option: $a" >&2; exit 1 ;;
     *) PORT=$a ;;
   esac
 done
@@ -31,9 +26,4 @@ FLAGS=(--build-property "compiler.cpp.extra_flags=$DEFS" --build-property "compi
 arduino-cli compile -b "$FQBN" "${FLAGS[@]}" --output-dir build hid_bridge
 (( BUILD_ONLY )) && exit 0
 PORT=${PORT:-$(port)}
-OLD=$PORT
-stty -f "$PORT" 1200 2>/dev/null || stty -F "$PORT" 1200 2>/dev/null || true
-for _ in $(seq 20); do sleep 0.5; PORT=$(port); [[ -n "$PORT" && "$PORT" != "$OLD" ]] && break; done
-sleep 1  # let the ROM bootloader's serial come up
-PORT=$(port)
-arduino-cli upload -b "$FQBN" -p "$PORT" --input-dir build hid_bridge
+arduino-cli upload -b "$FQBN" -p "$PORT" --upload-property "upload.speed=115200" --input-dir build hid_bridge

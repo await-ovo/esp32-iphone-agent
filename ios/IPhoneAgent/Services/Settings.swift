@@ -1,5 +1,4 @@
 import Foundation
-import NetworkExtension
 import Security
 import UIKit
 
@@ -11,6 +10,7 @@ import UIKit
     @Published private(set) var provider: ModelProvider = .others
     @Published private(set) var configurationRevision = 0
     private let defaults: UserDefaults
+    private let credentialNamespace: String
     @Published var baseURL: String { didSet {
         defaults.set(baseURL, forKey: "baseURL")
         if baseURL != oldValue {
@@ -22,11 +22,10 @@ import UIKit
     @Published var model: String { didSet { defaults.set(model, forKey: "model"); configurationRevision += 1 } }  // empty preserves a legacy saved selection
     /// The model picked from the endpoint's list when `model` is empty (forgotten when the endpoint or key changes).
     @Published private(set) var autoModel: String { didSet { defaults.set(autoModel, forKey: "autoModel") } }
-    @Published var plannerModel: String { didSet { defaults.set(plannerModel, forKey: "plannerModel"); configurationRevision += 1 } }  // "" = model
-    @Published var actorModel: String { didSet { defaults.set(actorModel, forKey: "actorModel"); configurationRevision += 1 } }        // "" = model
+    @Published var modelFamily: String { didSet { defaults.set(modelFamily, forKey: "modelFamily"); configurationRevision += 1 } }
     @Published var tokenParam: String { didSet { defaults.set(tokenParam, forKey: "tokenParam"); configurationRevision += 1 } }        // auto | ...
     @Published var extraBody: String { didSet { defaults.set(extraBody, forKey: "extraBody"); configurationRevision += 1 } }          // JSON object
-    @Published var apiKey: String { didSet { Keychain.set(apiKey, for: "llm-api-key"); DebugLog.redact([apiKey])
+    @Published var apiKey: String { didSet { Keychain.set(apiKey, for: credentialNamespace + "llm-api-key"); DebugLog.redact([apiKey])
         if apiKey != oldValue { modelsChanged() } } }
     /// What the agent is called (Agent tab title, greeting, Live Activity); empty = the default.
     /// The endpoint's model list (GET /models), for the pickers; empty until loaded or when it can't be fetched.
@@ -50,17 +49,17 @@ import UIKit
     @Published var acceptedDisclaimer: Bool { didSet { defaults.set(acceptedDisclaimer, forKey: "acceptedDisclaimer") } }
 
     /// info: where build-time presets are read from (the app's Info.plist; tests pass none).
-    init(defaults: UserDefaults = .standard, info: [String: Any]? = Bundle.main.infoDictionary) {
+    init(defaults: UserDefaults = .standard, info: [String: Any]? = Bundle.main.infoDictionary, credentialNamespace: String = "") {
         self.defaults = defaults
+        self.credentialNamespace = credentialNamespace
         let preset = { (key: String) in Self.stored((info?[key] as? String)?.trimmingCharacters(in: .whitespaces)) }
         baseURL = Self.stored(defaults.string(forKey: "baseURL")) ?? preset("IAPresetBaseURL") ?? Self.defaultBaseURL
         model = Self.stored(defaults.string(forKey: "model")) ?? preset("IAPresetModel") ?? Self.defaultModel
         autoModel = defaults.string(forKey: "autoModel") ?? ""
-        plannerModel = defaults.string(forKey: "plannerModel") ?? ""
-        actorModel = defaults.string(forKey: "actorModel") ?? ""
+        modelFamily = defaults.string(forKey: "modelFamily") ?? ""
         tokenParam = defaults.string(forKey: "tokenParam") ?? "auto"
         extraBody = defaults.string(forKey: "extraBody") ?? "{}"
-        apiKey = Self.stored(Keychain.get("llm-api-key")) ?? preset("IAPresetKey") ?? ""
+        apiKey = Self.stored(Keychain.get(credentialNamespace + "llm-api-key")) ?? preset("IAPresetKey") ?? ""
         agentName = defaults.string(forKey: Self.agentNameKey) ?? Self.defaultAgentName
         onboarded = defaults.bool(forKey: "onboarded")
         acceptedDisclaimer = defaults.bool(forKey: "acceptedDisclaimer")
@@ -107,16 +106,15 @@ import UIKit
     func selectProvider(_ choice: ModelProvider) {
         guard choice != provider else { return }
         // Keep credentials scoped to an endpoint when switching providers.
-        if !apiKey.isEmpty { Keychain.set(apiKey, for: "llm-endpoint-" + baseURL) }
+        if !apiKey.isEmpty { Keychain.set(apiKey, for: credentialNamespace + "llm-endpoint-" + baseURL) }
         provider = choice
         defaults.set(choice.rawValue, forKey: "modelProvider")
         if choice == .others { configurationRevision += 1; return }
         let changedEndpoint = baseURL != choice.baseURL
         baseURL = choice.baseURL
-        if changedEndpoint { apiKey = Keychain.get("llm-endpoint-" + baseURL) ?? "" }
+        if changedEndpoint { apiKey = Keychain.get(credentialNamespace + "llm-endpoint-" + baseURL) ?? "" }
         model = ""
-        plannerModel = ""
-        actorModel = ""
+        modelFamily = ""
         tokenParam = "auto"
         extraBody = "{}"
         modelsChanged()
@@ -148,10 +146,9 @@ import UIKit
         (try? JSONSerialization.jsonObject(with: Data(extraBody.utf8))) as? [String: Any] ?? [:]
     }
 
-    /// role "planner" or "actor": its own model if set, else the shared one.
-    func client(_ role: String) async throws -> LLMClient {
-        let own = role == "planner" ? plannerModel : actorModel
-        return LLMClient(baseURL: baseURL, model: own.isEmpty ? try await resolvedModel() : own, apiKey: apiKey,
+    /// Calibration, demonstrations and review use the same configured model.
+    func client() async throws -> LLMClient {
+        return LLMClient(baseURL: baseURL, model: try await resolvedModel(), apiKey: apiKey,
                          extra: extra, tokenParam: tokenParam)
     }
 }
@@ -176,55 +173,5 @@ enum Keychain {
         q[kSecValueData] = Data(value.utf8)
         q[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock  // the agent may run while the phone is locked
         SecItemAdd(q as CFDictionary, nil)
-    }
-}
-
-/// Joins the board's SoftAP with the credentials read over BLE (never shown or logged).
-enum Hotspot {
-    static func join(_ net: NetConfig) async throws {
-        guard let ssid = net.ssid, let pass = net.pass else { throw DeviceError(message: "board sent no hotspot credentials") }
-        let config = NEHotspotConfiguration(ssid: ssid, passphrase: pass, isWEP: false)
-        config.joinOnce = false
-        do {
-            try await NEHotspotConfigurationManager.shared.apply(config)
-        } catch let e as NSError where e.domain == NEHotspotConfigurationErrorDomain
-                    && e.code == NEHotspotConfigurationError.alreadyAssociated.rawValue {
-            return
-        }
-    }
-
-    /// For the debug log: domain, code, the NEHotspotConfigurationError name and the message.
-    static func describe(_ e: NSError) -> String {
-        guard e.domain == NEHotspotConfigurationErrorDomain else { return "\(e.domain) \(e.code): \(e.localizedDescription)" }
-        let names = ["invalid", "invalidSSID", "invalidWPAPassphrase", "invalidWEPPassphrase", "invalidEAPSettings",
-                     "invalidHS20Settings", "invalidHS20DomainName", "userDenied", "internal", "pending",
-                     "systemConfiguration", "unknown", "joinOnceNotSupported", "alreadyAssociated",
-                     "applicationIsNotInForeground", "invalidSSIDPrefix", "userUnauthorized", "systemDenied"]
-        let name = names.indices.contains(e.code) ? names[e.code] : "?"
-        return "\(e.domain) \(e.code) \(name): \(e.localizedDescription)"
-    }
-
-    static func userDenied(_ e: NSError) -> Bool {
-        e.domain == NEHotspotConfigurationErrorDomain && e.code == NEHotspotConfigurationError.userDenied.rawValue
-    }
-
-    /// Settings › Wi-Fi when iOS allows the deep link, else this app's page in Settings.
-    @MainActor static func openWiFiSettings() {
-        let app = UIApplication.shared
-        // iOS 18+ has no public or private link to the Wi-Fi page: page links like App-prefs:root=WIFI
-        // "succeed" but land on this app's page. The bare scheme opens the top of Settings (Wi-Fi is
-        // the second row). Last resort: this app's page.
-        var urls = ["App-prefs:"].compactMap(URL.init(string:))
-        urls.append(URL(string: UIApplication.openSettingsURLString)!)
-        func next() {
-            guard !urls.isEmpty else { return }
-            app.open(urls.removeFirst()) { ok in if !ok { next() } }
-        }
-        next()
-    }
-
-    /// The SSID the phone is on, if it is one of ours (needs the hotspot entitlement).
-    static func currentSSID() async -> String? {
-        await NEHotspotNetwork.fetchCurrent()?.ssid
     }
 }

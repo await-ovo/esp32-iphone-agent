@@ -86,7 +86,7 @@ struct CalibrationBoard: View {
                         }
                     }
                     .font(.subheadline.weight(.semibold)).monospacedDigit()
-                    Text("Hands off the screen for a few seconds.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Keep the screen untouched until calibration finishes.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

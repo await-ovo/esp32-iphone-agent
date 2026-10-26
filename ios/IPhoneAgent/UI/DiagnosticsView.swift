@@ -1,42 +1,34 @@
 import SwiftUI
 
-/// Live metrics and the built-in tests (BLE bench, snap latency, LLM ping, background run), plus trace export.
+/// Live metrics and the built-in checks (screen sharing and LLM ping), plus trace export.
 struct DiagnosticsView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var metrics: Metrics
     @ObservedObject var board: BoardLink
-    @ObservedObject var feed: VideoFeed
+    @ObservedObject var feed: ScreenCaptureFeed
     @State private var busy = false
     @State private var shareURL: URL?
 
     var body: some View {
         List {
             SwiftUI.Section("Tests") {
-                test("BLE bench (256 KB)", "speedometer") { await app.bench() }
-                test("Snap latency", "camera.viewfinder") { await app.snapTest() }
+                test("Screen sharing", "camera.viewfinder") { await app.captureTest() }
+                Button("Stop Screen Sharing") { Task { await feed.stop() } }
                 test("LLM ping", "bolt") { await app.pingLLM() }
-                test("Background test (10 min)", "moon.zzz") { await app.backgroundTest() }
                 Button { export() } label: { Label("Export traces", systemImage: "square.and.arrow.up") }
             }
             SwiftUI.Section("BLE") {
-                row("App-side video kbps", f(metrics.bleKbps))
-                row("Board BLE kbps", f(board.status?.ble?.kbps))
-                row("Bench kbps", f(metrics.benchKbps))
                 row("MTU (app / board)", "\(metrics.mtu) / \(board.status?.ble?.mtu.map(String.init) ?? "–")")
                 row("PHY", board.status?.ble?.phy.map { "\($0)M" } ?? "–")
-                row("Drops (app / board)", "\(metrics.drops) / \(board.status?.ble?.drop.map(String.init) ?? "–")")
                 row("Status age", String(format: "%.1f s", metrics.statusAge))
             }
-            SwiftUI.Section("Video") {
-                row("AirPlay kbps", f(board.status?.kbps))
-                row("AirPlay fps", f(board.status?.fps, "%.1f"))
-                row("IDR interval (board / app)", "\(board.status?.idr.map { "\($0) ms" } ?? "–") / \(f(metrics.idrIntervalMs)) ms")
-                row("GOP buffered", board.status?.gop.map { "\($0 / 1024) KB" } ?? "–")
-                row("Resolution", board.status.map { "\($0.w ?? 0) x \($0.h ?? 0)" } ?? "–")
-                row("Decoded fps", f(metrics.fps, "%.1f"))
-                row("Decode", f(metrics.decodeMs, "%.1f") + " ms")
-                row("Snap -> decoded", f(metrics.snapMs) + " ms")
-                row("Decode errors (bg)", "\(metrics.decodeErrors) (\(metrics.backgroundDecodeErrors))")
+            SwiftUI.Section("Screen Capture") {
+                row("Sharing", feed.capturing ? "On" : "Off")
+                row("Resolution", "\(Int(feed.size.width)) × \(Int(feed.size.height))")
+                row("Sampled fps", f(metrics.fps, "%.1f"))
+                row("JPEG processing", f(metrics.captureMs, "%.1f") + " ms")
+                row("Frame age", f(metrics.frameAge * 1000) + " ms")
+                row("Screenshot wait", f(metrics.screenshotMs) + " ms")
                 if !feed.note.isEmpty { Text(feed.note).font(.caption) }
             }
             SwiftUI.Section("Agent") {
@@ -55,9 +47,7 @@ struct DiagnosticsView: View {
                 row("Uptime", board.status?.up.map { "\($0 / 1000) s" } ?? "–")
                 row("Reset reason", board.status?.rst ?? "–")
                 row("Heap", board.status?.heap.map { "\($0 / 1024) KB" } ?? "–")
-                row("PSRAM", board.status?.psram.map { "\($0 / 1024) KB" } ?? "–")
-                row("USB", board.status?.usb ?? "–")
-                row("Network", "\(board.status?.net ?? "–") \(board.status?.ip ?? "")")
+                row("Mouse", board.status?.inputState ?? "–")
             }
         }
         .navigationTitle("Diagnostics")

@@ -13,12 +13,28 @@ jobs:
         working-directory: ios
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and test Midscene runtime
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.11.0 --activate
+          pnpm --dir Midscene install --frozen-lockfile
+          pnpm --dir Midscene test
+          pnpm --dir Midscene build
       - name: Unit tests (simulator, unsigned)
         run: |
-          sim=$(xcrun simctl list devices available | grep -Eo 'iPhone [0-9]+[A-Za-z ]*\(' | head -1 | sed 's/ ($//')
-          echo "simulator: $sim"
-          xcodebuild test -scheme IPhoneAgent -destination "platform=iOS Simulator,name=$sim" \
-            -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO
+          # The app imports the iOS 27 ScreenCaptureKit API; fail clearly on older runner images.
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          if [ "${sdk%%.*}" -lt 27 ]; then
+            echo "Xcode 27+ and an iOS 27+ simulator runtime are required (found SDK $sdk)."
+            exit 1
+          fi
+          sim=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for k,vs in d["devices"].items() if "iOS-27" in k for v in vs if v["name"].startswith("iPhone")))')
+          xcodebuild test -scheme IPhoneAgent -destination "platform=iOS Simulator,id=$sim" \
+            -testLanguage en -testRegion US -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO
+
 
   firmware:
     runs-on: ubuntu-latest
@@ -31,22 +47,5 @@ jobs:
           arduino-cli lib install "NimBLE-Arduino@2.5.1"
       - name: Build
         run: hardware/flash.sh --build-only
-      - name: Host tests (bplist, GOP buffer)
+      - name: Host tests (HID reports and input lifecycle)
         run: make -C hardware/tests
-
-  server:  # legacy v0.1.0 architecture, kept working
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.10", "3.12"]
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python }}
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: pytest -q

@@ -49,6 +49,7 @@ struct SavedIntentQuery: EntityStringQuery {
 /// Runs a saved intent. A LiveActivityIntent, so it runs in the app process (also from a widget button)
 /// and may start the Live Activity from the background.
 struct RunSavedIntentIntent: LiveActivityIntent {
+    static let openAppWhenRun = true
     static let title: LocalizedStringResource = "Run a Saved Intent"
     static let description = IntentDescription("Runs one of your saved intents on ESP32 Agent.")
 
@@ -67,6 +68,7 @@ struct RunSavedIntentIntent: LiveActivityIntent {
 
 /// Runs the intent run last (else the first saved one): the Control Center button.
 struct RunLastIntentIntent: LiveActivityIntent {
+    static let openAppWhenRun = true
     static let title: LocalizedStringResource = "Run Last Intent"
     static let description = IntentDescription("Runs the saved intent you ran last on ESP32 Agent.")
 

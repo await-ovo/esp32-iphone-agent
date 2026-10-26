@@ -43,7 +43,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Runs")
                 } footer: {
-                    Text("Every run keeps a low-frame-rate video of the mirrored screen, next to the step screenshots, for the review.")
+                    Text("Runs keep step screenshots and logs for review. Screen sharing does not save a video.")
                 }
                 Section {
                     NavigationLink { DiagnosticsView(app: app, metrics: app.metrics, board: board, feed: app.feed) } label: {
@@ -98,8 +98,8 @@ struct BoardSettingsView: View {
                 }
                 .padding(.vertical, Space.xs)
                 if board.connected, let s = board.status {
-                    ValueRow(title: "Mouse", value: s.usb ?? "–")
-                    ValueRow(title: "Mirroring", value: s.ap ?? "–")
+                    ValueRow(title: "Mouse", value: s.inputState)
+                    ValueRow(title: "Screen sharing", value: app.feed.capturing ? String(localized: "On") : String(localized: "Off"))
                 }
             }
             if board.pairedID == nil || !board.connected {
@@ -121,27 +121,6 @@ struct BoardSettingsView: View {
                     Text("Nearby")
                 }
             }
-            Section {
-                Button { app.startJoin() } label: {
-                    HStack {
-                        Text("Join the Board's Wi-Fi")
-                        Spacer()
-                        if app.join.busy { ProgressView() }
-                    }
-                }
-                .disabled(app.join.busy)
-                if let ssid = app.hotspotSSID { ValueRow(title: "Network", value: ssid) }
-                if let net = app.manualHotspot, let pass = net.pass {
-                    if let ssid = net.ssid { ValueRow(title: "Network", value: ssid) }
-                    ValueRow(title: "Password", value: pass)
-                    Button { UIPasteboard.general.string = pass; Haptics.success() } label: { Text("Copy Wi-Fi Password") }
-                    Button { UIPasteboard.general.string = pass; Hotspot.openWiFiSettings() } label: { Text("Open Settings") }
-                }
-            } header: {
-                Text("Wi-Fi")
-            } footer: {
-                Text("While joined, the internet goes over cellular data. Switch back in Settings › Wi-Fi when you are done.")
-            }
             if board.pairedID != nil {
                 Section {
                     Button("Unpair Board", role: .destructive) { Task { await board.unpair() } }
@@ -153,7 +132,6 @@ struct BoardSettingsView: View {
         }
         .navigationTitle("Board")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await app.refreshHotspot() }
     }
 }
 

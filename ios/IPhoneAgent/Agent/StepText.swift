@@ -9,6 +9,9 @@ enum StepText {
         case "replan (stuck)", "replan": return String(localized: "Made a new plan")
         case "tap": return String(localized: "Tap at \(n("x")), \(n("y"))")
         case "swipe": return String(localized: "Swipe")
+        case "scroll": return String(localized: "Scroll")
+        case "longpress": return String(localized: "Long press")
+        case "clear": return String(localized: "Clear input")
         case "path": return String(localized: "Draw a path")
         case "circle": return String(localized: "Draw a circle")
         case "type": return String(localized: "Type “\(s["text"]?.str ?? "")”")
@@ -30,6 +33,18 @@ enum StepText {
         }
     }
 
+    /// Midscene report names stay verbatim; demonstration and older native steps keep their titles.
+    static func reportTitle(_ s: JObject) -> String {
+        guard let name = s["sdkAction"]?.str, !name.isEmpty else { return title(s) }
+        return "aiAct → \(name)"
+    }
+
+    static func reportParameters(_ s: JObject) -> String? {
+        guard let value = s["sdkParam"] else { return nil }
+        let text = PyJSON.dumps(value, ascii: false)
+        return text == "{}" || text == "null" ? nil : text
+    }
+
     /// The model's own words if it gave any, else the action.
     static func line(_ s: JObject) -> String {
         if let t = s["thought"]?.str, !t.isEmpty { return t }
@@ -40,9 +55,9 @@ enum StepText {
     static func symbol(_ name: String?) -> String {
         switch name {
         case "plan", "replan (stuck)": return "list.bullet.clipboard"
-        case "tap": return "hand.tap"
-        case "swipe", "path", "circle": return "hand.draw"
-        case "type": return "keyboard"
+        case "tap", "longpress": return "hand.tap"
+        case "swipe", "scroll", "path", "circle": return "hand.draw"
+        case "type", "clear": return "keyboard"
         case "key": return "command"
         case "home": return "house"
         case "back": return "chevron.backward"

@@ -4,9 +4,9 @@ import UIKit
 /// Calibrates the pointer like a 3D printer's auto bed levelling, on the calibration board: a white
 /// full-screen grid (CalibrationBoard) over the app. The board homes the pointer, clicks at known mouse
 /// distances and the app catches the taps (TouchProbe), then fits mouse units → screen per axis. When no tap
-/// arrives it falls back to finding the pointer in the mirrored video (pixel diff, then the vision model).
+/// arrives it falls back to finding the pointer in the screen capture (pixel diff, then the vision model).
 /// If both fail the board offers Try Again and "Tap the pointer yourself" (manual needs the grid behind it).
-/// It never starts by itself: when calibration is needed and the mouse and mirroring are up, the Agent page
+/// It never starts by itself: when calibration is needed and the mouse is connected, the Agent page
 /// shows a Calibrate button; a run calibrates first if needed; Settings › Calibration starts it too.
 @MainActor final class AutoCalibrator: ObservableObject {
     enum Phase: Equatable {
@@ -26,7 +26,7 @@ import UIKit
 
     struct Progress: Equatable { var done: Int, total: Int }
 
-    static let tolerance = 0.015  // fraction of the screen; a bigger miss calibrates again
+    static let tolerance = Pointer.calibrationTolerance
 
     @Published var phase = Phase.idle
     @Published var reason = ""  // why the last run started
@@ -46,9 +46,9 @@ import UIKit
 
     var busy: Bool { phase.step != nil }
 
-    /// The mouse is up (board connected, USB HID mounted).
-    var boardReady: Bool { app.board.connected && app.board.status?.usb == "ok" }
-    var mirroring: Bool { app.board.status?.ap == "streaming" }
+    /// The command link and the phone's HID service are both ready.
+    var boardReady: Bool { app.board.connected && app.board.status?.inputReady == true }
+    var sharing: Bool { app.feed.capturing || MockMode.on }
 
     /// Calibration is due: never done, the screen shape changed, or the learned correction drifted.
     var needed: Bool {
@@ -59,7 +59,7 @@ import UIKit
     }
 
     /// Show the Calibrate button: due, and everything it needs is up.
-    var offer: Bool { (needed || MockMode.on && !app.pointer.calibrated) && (MockMode.on || boardReady && mirroring) && !busy && !boardOpen }
+    var offer: Bool { (needed || MockMode.on && !app.pointer.calibrated) && (MockMode.on || boardReady) && !busy && !boardOpen }
 
     /// Open the board and calibrate automatically (Calibrate button, Settings, debug entry).
     func calibrate(why: String = String(localized: "requested")) {
@@ -70,6 +70,7 @@ import UIKit
     /// Before a run: calibrate if needed and wait for it. True when the pointer is calibrated.
     func ensureCalibrated() async -> Bool {
         while busy { try? await Task.sleep(nanoseconds: 200_000_000) }
+        guard boardReady else { return false }
         if !app.pointer.calibrated && boardReady { await run(why: String(localized: "before a run")) }
         return app.pointer.calibrated
     }
@@ -100,7 +101,10 @@ import UIKit
     /// The board's Back button: stop whatever runs and close the board.
     func cancel() {
         current?.cancel()
-        if busy || phase == .needsTap { app.say("calibration: cancelled") }
+        if busy || phase == .needsTap {
+            app.say("calibration: cancelled")
+            app.pointer.clearCalibration()
+        }
         progress = nil
         phase = app.pointer.calibrated ? .done : .idle
         closeBoard()
@@ -116,49 +120,51 @@ import UIKit
                 switch try await touchCalibrate(full: true) {
                 case .done(let error): return finished(error)
                 case .noTaps: noTaps = true
-                case .failed(let why): app.say("calibration: touch probe failed: \(why)")
+                case .failed(let why): return failed(why)
                 }
             } catch {
                 if Task.isCancelled { return }
-                app.say("calibration: touch probe: \(error.localizedDescription)")
+                return failed(error.localizedDescription)
             }
         }
         if Task.isCancelled { return }
         progress = nil
-        await videoCalibrate(noTaps: noTaps)
+        await screenCalibrate(noTaps: noTaps)
     }
 
-    /// The fallback: find the pointer in the mirrored video.
-    private func videoCalibrate(noTaps: Bool) async {
+    /// The fallback: find the pointer in the screen capture.
+    private func screenCalibrate(noTaps: Bool) async {
         let diagnosis = noTaps ? Self.noTapsText : nil
-        guard mirroring else { return failed(diagnosis ?? String(localized: "Mirroring is off, so the pointer can't be seen.")) }
-        guard FrameMode.current == .stream else {  // the video finder needs the live stream
-            app.say("calibration: video fallback skipped in snap mode")
-            return failed(diagnosis ?? String(localized: "Pointer not found on screen."))
-        }
+        guard sharing else { return failed(diagnosis ?? String(localized: "Share the screen to locate the pointer.")) }
         do {
-            try await app.feed.stream(true)
-            defer { if !app.agent.running { Task { try? await app.feed.stream(false) } } }
             let ok = try await app.pointer.startCalibration { [weak self] i in
                 self?.phase = [.homing, .probeA, .probeB][min(i, 2)]
             }
             if Task.isCancelled { return }
             guard ok else { return failed(diagnosis ?? String(localized: "Pointer not found on screen.")) }
             phase = .verifying
-            guard let error = try await app.pointer.verify() else {
-                return failed(diagnosis ?? String(localized: "Check point not found."))
+            var worst = 0.0
+            for (x, y) in Self.verificationTargets {
+                guard let error = try await app.pointer.verify(x: x, y: y) else {
+                    return failed(diagnosis ?? String(localized: "Check point not found."))
+                }
+                worst = max(worst, error)
             }
-            finished(error)
+            finished(worst)
         } catch {
             if !Task.isCancelled { failed(diagnosis ?? error.localizedDescription) }
         }
     }
 
     static var noTapsText: String {
-        String(localized: "Clicks aren't reaching the screen — is AssistiveTouch on and the board plugged into this iPhone?")
+        String(localized: "Clicks aren't reaching the screen. Check AssistiveTouch and the Bluetooth mouse connection.")
     }
 
     func finished(_ error: Double) {
+        guard error.isFinite, error >= 0, error <= Self.tolerance else {
+            return failed(String(localized: "Pointer verification failed: worst error \(String(format: "%.1f", error * 100))%. Calibrate again."))
+        }
+        app.pointer.setQuality(error)
         link = app.board.commands.links
         progress = nil
         problem = nil
@@ -176,6 +182,7 @@ import UIKit
 
     /// The board stays up with the problem, Try Again and "Tap the pointer yourself".
     private func failed(_ why: String) {
+        app.pointer.clearCalibration()
         progress = nil
         problem = why
         phase = .failed
@@ -192,8 +199,7 @@ import UIKit
         current?.cancel()
         current = Task {
             do {
-                try await app.pointer.reset()
-                try await app.board.commands.send("move \(Pointer.calibrationMove) \(Pointer.calibrationMove)")
+                try await app.pointer.positionFromHome(Pointer.calibrationMove, Pointer.calibrationMove)
             } catch {
                 return failed(error.localizedDescription)
             }
@@ -202,7 +208,16 @@ import UIKit
                 if let p = await app.probe.tap(since: since, timeout: 1) {
                     app.say(String(format: "calibration: tapped the pointer at (%.3f, %.3f)", p.x, p.y))
                     app.pointer.finishCalibration(x: p.x, y: p.y)
-                    return finished(app.pointer.quality ?? 0.01)
+                    do {
+                        switch try await touchCalibrate(full: false) {
+                        case .done(let error): return finished(error)
+                        case .failed(let why): return failed(why)
+                        case .noTaps: return failed(Self.noTapsText)
+                        }
+                    } catch {
+                        if !Task.isCancelled { failed(error.localizedDescription) }
+                        return
+                    }
                 }
             }
         }
