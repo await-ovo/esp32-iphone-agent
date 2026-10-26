@@ -1,65 +1,134 @@
 import XCTest
+import UIKit
 @testable import IPhoneAgent
 
-/// `video` chunk reassembly (docs/ble-protocol.md).
-final class VideoTests: XCTestCase {
-    typealias F = VideoAssembler.Flags
-
-    func chunk(_ seq: UInt16, _ flags: F, _ payload: [UInt8], ms: UInt32? = nil) -> Data {
-        var d = Data([UInt8(seq & 0xff), UInt8(seq >> 8), flags.rawValue])
-        if let ms { d.append(contentsOf: [UInt8(ms & 0xff), UInt8(ms >> 8 & 0xff), UInt8(ms >> 16 & 0xff), UInt8(ms >> 24)]) }
-        d.append(contentsOf: payload)
-        return d
+@MainActor final class ScreenCaptureTests: XCTestCase {
+    private func jpeg(_ color: UIColor) -> Data {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 200, height: 400), format: format).jpegData(withCompressionQuality: 0.75) { ctx in
+            color.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 400))
+        }
     }
 
-    let sps: [UInt8] = [0, 0, 0, 1, 0x67, 1, 2]
-    let idr: [UInt8] = [0, 0, 0, 1, 0x65, 9, 9]
-    let p: [UInt8] = [0, 0, 0, 1, 0x41, 7]
-
-    func testInOrderChunksMakeAccessUnits() {
-        var a = VideoAssembler()
-        XCTAssertEqual(a.add(chunk(0, [.start, .end, .config], sps, ms: 1000))?.config, true)
-        XCTAssertNil(a.add(chunk(1, [.start, .idr], Array(idr[0..<5]), ms: 1001)))
-        let unit = a.add(chunk(2, [.end, .idr], Array(idr[5...])))
-        XCTAssertEqual(unit, AccessUnit(data: Data(idr), idr: true, config: false, snap: false, boardMs: 1001))
-        XCTAssertEqual(a.add(chunk(3, [.start, .end], p, ms: 1200))?.data, Data(p))
-        XCTAssertEqual(a.drops, 0)
+    func testIdenticalFramesSettleWithoutRepeatedImageComparisons() async throws {
+        let feed = ScreenCaptureFeed(), image = jpeg(.black)
+        feed.show(image, width: 200, height: 400)
+        let updates = Task {
+            for _ in 0..<3 {
+                try await Task.sleep(for: .milliseconds(20))
+                feed.show(image, width: 200, height: 400)
+            }
+        }
+        let result = await feed.settled(quiet: 0.1, least: 0, most: 1)
+        try await updates.value
+        XCTAssertEqual(result.reason, .quiet)
+        XCTAssertEqual(result.comparisons, 0)
+        XCTAssertEqual(result.comparisonMs, 0)
     }
 
-    func testGapDropsUntilTheNextKeyUnit() {
-        var a = VideoAssembler()
-        _ = a.add(chunk(10, [.start, .end, .idr], idr, ms: 1))
-        XCTAssertNil(a.add(chunk(11, [.start], p, ms: 2)))
-        XCTAssertNil(a.add(chunk(13, [.end], p)))           // 12 lost: the half unit is dropped
-        XCTAssertEqual(a.drops, 1)
-        XCTAssertNil(a.add(chunk(14, [.start, .end], p, ms: 3)))  // a P-frame after a gap is useless
-        XCTAssertNotNil(a.add(chunk(15, [.start, .end, .config], sps, ms: 4)))  // recovered on CONFIG
-        XCTAssertNotNil(a.add(chunk(16, [.start, .end], p, ms: 5)))
+    func testAChangedFrameRestartsTheQuietPeriod() async throws {
+        let feed = ScreenCaptureFeed(), changed = jpeg(.white)
+        feed.show(jpeg(.black), width: 200, height: 400)
+        let update = Task {
+            try await Task.sleep(for: .milliseconds(20))
+            feed.show(changed, width: 200, height: 400)
+            return now()
+        }
+        let result = await feed.settled(quiet: 0.1, least: 0, most: 2)
+        let arrived = try await update.value
+        XCTAssertEqual(result.reason, .quiet)
+        XCTAssertEqual(result.comparisons, 1)
+        XCTAssertEqual(feed.frame, changed)
+        XCTAssertGreaterThanOrEqual(now() - arrived, 0.1)
     }
 
-    func testRecoversOnIDRAndWrapsSeq() {
-        var a = VideoAssembler()
-        _ = a.add(chunk(65534, [.start, .end, .idr], idr, ms: 1))
-        XCTAssertNotNil(a.add(chunk(65535, [.start, .end], p, ms: 2)))
-        XCTAssertNotNil(a.add(chunk(0, [.start, .end], p, ms: 3)))  // u16 wrap is not a gap
-        XCTAssertEqual(a.drops, 0)
-        XCTAssertNil(a.add(chunk(5, [.start, .end], p, ms: 4)))
-        XCTAssertEqual(a.drops, 4)
-        let unit = a.add(chunk(6, [.start, .end, .idr, .snap], idr, ms: 5))
-        XCTAssertEqual(unit?.snap, true)
+    func testSettlingReportsCancellationInsteadOfWaitingForTheLimit() async throws {
+        let feed = ScreenCaptureFeed()
+        feed.show(jpeg(.black), width: 200, height: 400)
+        let job = Task { await feed.settled(quiet: 5, least: 5, most: 10) }
+        try await Task.sleep(for: .milliseconds(20))
+        job.cancel()
+        let result = await job.value
+        XCTAssertEqual(result.reason, .cancelled)
+        XCTAssertLessThan(result.elapsedMs, 1000)
     }
 
-    func testWaitsForAKeyUnitAtStartAndIgnoresBench() {
-        var a = VideoAssembler()
-        XCTAssertNil(a.add(chunk(0, [.start, .end], p, ms: 1)))
-        XCTAssertNil(a.add(chunk(1, [.bench], [UInt8](repeating: 0, count: 100))))
-        XCTAssertEqual(a.benchBytes, 103)
-        XCTAssertNotNil(a.add(chunk(2, [.start, .end, .idr], idr, ms: 2)))
+    func testAnUnavailableFrameIsNotReportedAsQuiet() async {
+        let result = await ScreenCaptureFeed().settled(quiet: 0.01, least: 0, most: 0.1)
+        XCTAssertEqual(result.reason, .timeout)
+        XCTAssertEqual(result.comparisons, 0)
     }
 
-    func testAnnexBSplitsNALUnits() {
-        let units = annexBUnits(Data(sps + [0, 0, 1, 0x68, 5] + idr))
-        XCTAssertEqual(units.map { $0.first! & 0x1f }, [7, 8, 5])
-        XCTAssertEqual(units[0], Data([0x67, 1, 2]))
+    func testScreenshotWaitsForAnImageAfterTheAction() async throws {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        let action = now()
+        let arrival = Task {
+            try await Task.sleep(for: .milliseconds(30))
+            feed.show(Data([2]), width: 200, height: 400)
+        }
+        let result = try await feed.image(after: action, timeout: 0.5)
+        try await arrival.value
+        XCTAssertEqual(result, Data([2]))
+        XCTAssertGreaterThan(feed.capturedAt, action)
+    }
+
+    func testUnchangedContentRemainsUsableWithoutFakingItsCaptureTime() async throws {
+        let feed = ScreenCaptureFeed()
+        let captured = now() - 20
+        feed.show(Data([1]), width: 200, height: 400, captured: captured)
+        XCTAssertTrue(feed.live)
+        let snapshot = try await feed.snapshot(after: now() - 1, timeout: 0.03)
+        XCTAssertEqual(snapshot.jpeg, Data([1]))
+        XCTAssertEqual(snapshot.capturedAt, captured)
+    }
+
+    func testInvalidatedStreamCannotServeItsPreviousImage() async {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        feed.invalidateFrame()
+        XCTAssertFalse(feed.live)
+        do { _ = try await feed.snapshot(timeout: 0.03); XCTFail("Blank or suspended streams must not serve their cache") }
+        catch { XCTAssertTrue(error is ScreenCaptureError) }
+    }
+
+    func testMissingPostActionFrameTimesOutWithoutUsingThePreviousImage() async {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        do { _ = try await feed.image(after: now() + 1, timeout: 0.03); XCTFail("Expected a fresh image") }
+        catch { XCTAssertTrue(error is ScreenCaptureError) }
+    }
+
+    func testWaitingForAFrameCanBeCancelled() async throws {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        let job = Task { try await feed.image(after: now() + 1) }
+        try await Task.sleep(for: .milliseconds(20)); job.cancel()
+        do { _ = try await job.value; XCTFail("Expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    func testStoppingWakesAnOutstandingScreenshotRequest() async throws {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        let waiting = Task { try await feed.image(after: now() + 1, timeout: 5) }
+        try await Task.sleep(for: .milliseconds(20))
+        let stopped = now()
+        await feed.stop()
+        do { _ = try await waiting.value; XCTFail("A stopped session must reject pending screenshots") }
+        catch { XCTAssertTrue(error is ScreenCaptureError) }
+        XCTAssertLessThan(now() - stopped, 0.5)
+    }
+
+    func testStoppingInvalidatesCachedFramesAndSelectedImagesStayImmutable() async throws {
+        let feed = ScreenCaptureFeed()
+        feed.show(Data([1]), width: 200, height: 400)
+        let selected = try await feed.image()
+        feed.show(Data([2]), width: 200, height: 400)
+        XCTAssertEqual(selected, Data([1]))
+        await feed.stop()
+        XCTAssertFalse(feed.live); XCTAssertNil(feed.frame)
+        do { _ = try await feed.image(); XCTFail("Stopped capture cannot return a cache") }
+        catch { XCTAssertTrue(error is ScreenCaptureError) }
     }
 }

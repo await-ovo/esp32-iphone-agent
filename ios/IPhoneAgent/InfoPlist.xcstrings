@@ -1,8 +1,8 @@
 {
   "sourceLanguage" : "en",
-  "version" : "1.0",
   "strings" : {
     "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -18,7 +18,20 @@
         }
       }
     },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "IPhoneAgent"
+          }
+        }
+      }
+    },
     "NSBluetoothAlwaysUsageDescription" : {
+      "comment" : "Privacy - Bluetooth Always Usage Description",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -34,5 +47,6 @@
         }
       }
     }
-  }
+  },
+  "version" : "1.0"
 }

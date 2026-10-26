@@ -9,7 +9,7 @@ struct WelcomePage: View {
     var body: some View {
         VStack(spacing: Space.xl) {
             PageHeader(mood: awake ? .idle : .sleeping, title: "Hi, I'm ESP32 Agent",
-                       message: "Tell me a task and I'll do it on this iPhone: I see the screen through Screen Mirroring and tap with a USB mouse.")
+                       message: "Tell me a task and I'll do it on this iPhone: I see the screen with your permission and tap with a Bluetooth mouse.")
             Panel {
                 DisclosureGroup {
                     Text(Disclaimer.text).font(.footnote).foregroundStyle(.secondary).padding(.top, Space.s)
@@ -40,9 +40,8 @@ struct ConnectPage: View {
     var body: some View {
         VStack(spacing: Space.xl) {
             PageHeader(mood: board.connected ? .success : board.scanning ? .listening : .sleeping,
-                       title: "Plug Me In",
-                       message: "Connect the board to the USB-C port. I'll find it over Bluetooth; tap Pair when iOS asks.")
-            if !board.connected { MiniPhoneDemo(kind: .plugIn) }
+                       title: "Connect My Board",
+                       message: "Power the board from a USB charger or power bank. I'll find it over Bluetooth; tap Pair when iOS asks.")
             Panel {
                 switch board.state {
                 case .unauthorized:
@@ -107,90 +106,20 @@ struct ConnectPage: View {
     }
 }
 
-/// 2 · Let it see the screen: join the board's Wi-Fi (one tap, the system asks), then Screen Mirroring.
-/// The page's one action is the bottom button (OnboardingView); manual join shows only if one-tap fails.
+/// Screen sharing is authorized on this iPhone, independently of the Bluetooth board.
 struct SeePage: View {
     @ObservedObject var app: AppModel
     @ObservedObject var board: BoardLink
-    @Binding var onWiFi: Bool
-    @State private var copied = false
-    @Environment(\.scenePhase) private var scenePhase
-
-    private var streaming: Bool { board.connected && board.status?.ap == "streaming" }
-    // The board counts hotspot clients, so joining by hand is detected without the hotspot entitlement.
-    private var joined: Bool {
-        app.otherWiFi == nil && (onWiFi || app.join == .joined || app.hotspotSSID != nil || streaming || (board.connected && (board.status?.sta ?? 0) > 0))
-    }
-    private var failure: String? { if case .failed(let why) = app.join { return why } else { return nil } }
-
     var body: some View {
         VStack(spacing: Space.xl) {
-            PageHeader(mood: streaming ? .success : (app.join.busy || joined) ? .listening : failure != nil ? .failure : .idle,
-                       title: "Let Me See the Screen",
-                       message: "Screen Mirroring goes to the board over its own Wi-Fi.")
+            PageHeader(mood: app.feed.capturing ? .success : .idle, title: "Let Me See the Screen",
+                       message: "Start a task to allow screen sharing. Your screen stays on this iPhone until a task sends a screenshot to your chosen model.")
             Panel {
-                CheckRow(title: "Join the board's Wi-Fi", done: joined, active: !joined, waiting: app.join.busy && !joined,
-                         detail: joined ? nil : app.join == .verifying ? "Checking the connection…"
-                            : app.join.busy ? "Joining usually takes up to 10 seconds — hang tight." : failure.map { LocalizedStringKey($0) })
-                Divider().padding(.vertical, Space.s)
-                CheckRow(title: "Start Screen Mirroring", done: streaming, active: joined && !streaming)
-            }
-            if !joined {
-                if let net = app.manualHotspot, let ssid = net.ssid, failure != nil { manual(ssid: ssid, pass: net.pass) }
-                Label("Internet uses cellular data while on the board's Wi-Fi.", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Button("I'm already on the board's Wi-Fi") { onWiFi = true }.font(.footnote)
-            } else if !streaming {
-                Text("Now swipe down from the top-right corner and tap **Screen Mirroring → ESP32 Agent**.")
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                MiniPhoneDemo(kind: .controlCenter)
-                VStack(spacing: Space.s) {
-                    HStack(spacing: Space.s) {
-                        ProgressView().controlSize(.small)
-                        Text("Waiting for Screen Mirroring…")
-                    }
-                    Label("Keep the screen unlocked: locking stops mirroring.", systemImage: "lock.open")
-                }
-                .font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: joined)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.join)
-        .task {  // join once by itself, then keep checking every 2 s while on this step
-            if !joined { app.startJoin(auto: true) }
-            while !Task.isCancelled && !streaming {
-                await app.refreshHotspot()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await app.refreshHotspot() } } }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.manualHotspot?.ssid)
-    }
-
-    /// One-tap join failed: the network and its password, to join in Settings › Wi-Fi.
-    private func manual(ssid: String, pass: String?) -> some View {
-        Panel {
-            LabeledContent("Network") { Text(verbatim: ssid).font(.body.monospaced()).textSelection(.enabled) }
-            if let pass {
-                Divider().padding(.vertical, Space.s)
-                LabeledContent("Password") {
-                    HStack(spacing: Space.s) {
-                        Text(verbatim: pass).font(.body.monospaced().weight(.semibold)).textSelection(.enabled)
-                        Button {
-                            UIPasteboard.general.string = pass
-                            copied = true
-                            Haptics.success()
-                        } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
-                            .accessibilityLabel(Text(copied ? "Copied" : "Copy"))
-                    }
-                }
-                Divider().padding(.vertical, Space.s)
-                Button {
-                    UIPasteboard.general.string = pass; copied = true
-                    Hotspot.openWiFiSettings()
-                } label: { Label("Copy Password & Open Settings", systemImage: "gear") }
-                    .font(.subheadline.weight(.semibold))
+                Label("Permission is requested when you start a task.", systemImage: "hand.raised")
+                    .font(.subheadline)
+                Text("Each task asks to share your screen. Sharing stops when the task ends; a full video is never saved.")
+                    .font(.footnote).foregroundStyle(.secondary).padding(.top, Space.s)
+                if !app.feed.note.isEmpty { Text(verbatim: app.feed.note).foregroundStyle(Palette.warning).font(.footnote) }
             }
         }
     }
@@ -203,21 +132,21 @@ struct ActPage: View {
     @ObservedObject var calibrator: AutoCalibrator
     @ObservedObject var pointer: Pointer
 
-    private var mouse: Bool { MockMode.on || board.status?.usb == "ok" }
-    private var mirroring: Bool { MockMode.on || board.status?.ap == "streaming" }
+    private var mouse: Bool { MockMode.on || board.status?.inputReady == true }
+    private var sharing: Bool { MockMode.on || app.feed.capturing }
 
     var body: some View {
         VStack(spacing: Space.xl) {
             PageHeader(mood: pointer.calibrated ? .success : calibrator.busy ? .acting : .idle,
                        title: "Let Me Use the Pointer",
-                       message: "The board is a USB mouse. iOS shows its pointer only with AssistiveTouch on. Then I calibrate on a grid, like a 3D printer levelling its bed.")
+                       message: "Turn on AssistiveTouch, then open Devices › Bluetooth Devices and connect ESP32 Agent. I'll calibrate the Bluetooth mouse on a grid.")
             if !pointer.calibrated { MiniPhoneDemo(kind: .assistiveTouch) }
             Panel {
                 CheckRow(title: "Mouse connected", done: mouse, active: !mouse, waiting: board.connected && !mouse)
                 Divider().padding(.vertical, Space.s)
-                CheckRow(title: "Screen Mirroring on", done: mirroring, active: mouse && !mirroring)
+                CheckRow(title: "Screen sharing", done: sharing, active: mouse && !sharing)
                 Divider().padding(.vertical, Space.s)
-                CheckRow(title: "Pointer calibrated", done: pointer.calibrated, active: mouse && mirroring && !pointer.calibrated,
+                CheckRow(title: "Pointer calibrated", done: pointer.calibrated, active: mouse && !pointer.calibrated,
                          waiting: calibrator.busy,
                          detail: pointer.quality.map { "Accuracy \(CalibrationText.percent($0))" })
             }
@@ -240,7 +169,7 @@ struct BrainPage: View {
         VStack(spacing: Space.xl) {
             PageHeader(mood: app.modelOK == true ? .success : app.modelOK == false ? .failure : .thinking,
                        title: "Give Me a Brain",
-                       message: "Any OpenAI-compatible vision model works. The key stays in this iPhone's Keychain.")
+                       message: "Choose a Midscene-supported vision model and set its model family. The key stays in this iPhone's Keychain.")
             if MockMode.on {
                 Panel { Label("Demo data simulates the model.", systemImage: "theatermasks") }
             } else {
@@ -250,9 +179,13 @@ struct BrainPage: View {
             switch app.modelOK {
             case true?:
                 Panel {
-                    Label("Connected. Try this first:", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.ok)
-                    Text(verbatim: IntentStore.examples[0].prompt).font(.subheadline).foregroundStyle(.secondary)
-                        .padding(.top, Space.s)
+                    if app.modelReady {
+                        Label("Connected. Try this first:", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.ok)
+                        Text(verbatim: IntentStore.examples[0].prompt).font(.subheadline).foregroundStyle(.secondary)
+                            .padding(.top, Space.s)
+                    } else {
+                        Text("Choose the Midscene model family in Settings.")
+                    }
                 }
             case false?:
                 Label(app.modelError ?? String(localized: "Could not reach the model. Check the URL and key."), systemImage: "xmark.octagon.fill")

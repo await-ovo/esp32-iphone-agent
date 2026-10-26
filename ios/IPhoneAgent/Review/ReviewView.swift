@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// Review and editor, one screen for a finished run, a demonstration and an intent: media on top (step
-/// screenshots with overlays, or the run video), the timeline below, and per step ✓ / ✗, Fix, Insert after,
+/// screenshots with overlays, or task screenshots), the timeline below, and per step ✓ / ✗, Fix, Insert after,
 /// Delete and Re-run from here. "Optimize with AI" and "Save as Intent" are pinned at the bottom.
 struct ReviewView: View {
     @ObservedObject var draft: ReviewDraft
     @ObservedObject var app: AppModel
-    @ObservedObject var agent: AgentLoop
+    @ObservedObject var agent: MidsceneController
     @ObservedObject var runs: RunStore
 
     init(draft: ReviewDraft, app: AppModel) {
@@ -25,8 +25,6 @@ struct ReviewView: View {
     @State private var index = 0
     @State private var playing = false
     @State private var speed = 1.0
-    @State private var showVideo = false
-    @State private var videoTime = 0.0
     @State private var expanded = false
     @State private var fixing: DraftStep?
     @State private var inserting = false
@@ -39,7 +37,6 @@ struct ReviewView: View {
 
     private var steps: [DraftStep] { draft.steps }
     private var step: DraftStep? { steps.indices.contains(index) ? steps[index] : nil }
-    @State private var video: [(url: URL, t: Double)] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,43 +75,17 @@ struct ReviewView: View {
                 if outcome == .running { Spacer() }
                 else { IntentWordsView(draft: draft) }
             } else {
-                if !video.isEmpty {
-                    Picker("View", selection: $showVideo) {
-                        Text("Steps").tag(false)
-                        Text("Video").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, Space.xl)
-                    .padding(.bottom, Space.xs)
-                }
-                if showVideo && !video.isEmpty {  // continuous video, scrubbed in seconds
-                    RunVideoView(frames: video, time: videoTime, caption: step.map { StepText.title($0.action) })
-                    VideoScrubber(start: video[0].t, end: video[video.count - 1].t, time: $videoTime, playing: $playing)
-                        .padding(.horizontal, Space.xl)
-                    controls
-                } else {  // one screenshot per step, with its action drawn on it
-                    media
-                    stepCard
-                    ReviewTimeline(steps: steps, index: $index, playing: $playing).padding(.horizontal, Space.xl)
-                    controls
-                }
+                media
+                stepCard
+                ReviewTimeline(steps: steps, index: $index, playing: $playing).padding(.horizontal, Space.xl)
+                controls
             }
         }
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .safeAreaInset(edge: .bottom) { if !draft.readOnly && outcome != .running { bottomBar } }
-        .task(id: [playing, showVideo]) { await autoplay() }
-        .onChange(of: showVideo) { playing = false }
-        .onChange(of: videoTime) { _, t in  // the step follows the video
-            guard showVideo, let i = steps.lastIndex(where: { ($0.t ?? 0) <= t }), i != index else { return }
-            index = i
-        }
-        .onChange(of: index) { _, i in
-            Haptics.tick()
-            if !playing, let t = steps[safe: i]?.t { videoTime = t }
-        }
+        .task(id: playing) { await autoplay() }
+        .onChange(of: index) { expanded = false; Haptics.tick() }
         .onAppear {
-            video = draft.runID.flatMap { app.runs.run($0) }?.video ?? []
-            videoTime = steps.first?.t ?? 0
             if let firstUnsure = steps.firstIndex(where: \.uncertain) { index = firstUnsure }
             if draft.showSaveOnOpen { saving = true; draft.showSaveOnOpen = false }
         }
@@ -192,7 +163,7 @@ struct ReviewView: View {
             VStack(alignment: .leading, spacing: Space.s) {
                 HStack(spacing: Space.s) {
                     Image(systemName: StepText.symbol(step.name)).foregroundStyle(.secondary)
-                    Text(verbatim: StepText.title(step.action)).font(.headline).lineLimit(1)
+                    Text(verbatim: StepText.reportTitle(step.action)).font(.headline).lineLimit(2)
                     if step.uncertain {
                         Text("Unsure").font(.caption2.weight(.bold)).padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Capsule().fill(Color.yellow.opacity(0.35)))
@@ -200,15 +171,44 @@ struct ReviewView: View {
                     Spacer()
                     if !draft.readOnly { verdictButtons(step) }
                 }
+                if let status = step.action["status"]?.str {
+                    HStack {
+                        Text(status == "running" ? (outcome == .running ? "Running" : "Interrupted") : status == "failed" ? "Failed" : "Completed")
+                            .foregroundStyle(status == "failed" ? Palette.stop : .secondary)
+                        Spacer()
+                        if let seconds = step.action["act_s"]?.double {
+                            Text(verbatim: String(format: "%.2f s", seconds)).monospacedDigit().foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption)
+                }
+                if step.action["status"]?.str == "failed", let reason = step.action["reason"]?.str {
+                    Text(verbatim: reason).font(.subheadline).foregroundStyle(Palette.stop)
+                }
+                if let target = step.action["target"]?.str, !target.isEmpty {
+                    Label { Text(verbatim: target).textSelection(.enabled) } icon: { Image(systemName: "scope") }
+                        .font(.subheadline).lineLimit(3)
+                }
+                if let params = StepText.reportParameters(step.action) {
+                    Text(verbatim: params).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(3).textSelection(.enabled)
+                }
                 if let thought = step.action["thought"]?.str ?? step.action["plan"]?.str ?? step.action["reason"]?.str {
-                    Text(verbatim: thought).font(.subheadline).foregroundStyle(.secondary).lineLimit(expanded ? nil : 2)
-                        .onTapGesture { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { expanded.toggle() } }
+                    Text(verbatim: step.action["sdkAction"] != nil ? "Plan · \(thought)" : thought).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                 }
                 if !step.note.isEmpty {
                     Label { Text(verbatim: step.note) } icon: { Image(systemName: "pencil.line") }
                         .font(.subheadline).foregroundStyle(Palette.ok)
                 }
-                if expanded { StepDetails(step: step) }
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { expanded.toggle() }
+                } label: {
+                    Label(expanded ? "Hide details" : "Details", systemImage: expanded ? "chevron.up" : "chevron.down")
+                }
+                .font(.caption).buttonStyle(.plain).foregroundStyle(.secondary)
+                if expanded {
+                    ScrollView { StepDetails(step: step) }.frame(maxHeight: 180)
+                }
                 if !draft.readOnly { stepActions(step) }
             }
             .padding(Space.l)
@@ -277,28 +277,18 @@ struct ReviewView: View {
             }
             .accessibilityLabel(Text("Playback speed"))
             Spacer()
-            if videoMode {
-                Button { seek(-5) } label: { Image(systemName: "gobackward.5") }.accessibilityLabel(Text("Back 5 seconds"))
-            } else {
-                Button { go(-1) } label: { Image(systemName: "backward.end.fill") }
-                    .disabled(index == 0).accessibilityLabel(Text("Previous step"))
-            }
+            Button { go(-1) } label: { Image(systemName: "backward.end.fill") }
+                .disabled(index == 0).accessibilityLabel(Text("Previous step"))
             Button {
-                if videoMode {
-                    if videoTime >= video[video.count - 1].t { videoTime = video[0].t }
-                } else if index >= steps.count - 1 { index = 0 }
+                if index >= steps.count - 1 { index = 0 }
                 playing.toggle()
             } label: {
                 Image(systemName: playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 44))
             }
             .padding(.horizontal, Space.m)
             .accessibilityLabel(Text(playing ? "Pause" : "Play"))
-            if videoMode {
-                Button { seek(5) } label: { Image(systemName: "goforward.5") }.accessibilityLabel(Text("Forward 5 seconds"))
-            } else {
-                Button { go(1) } label: { Image(systemName: "forward.end.fill") }
-                    .disabled(index >= steps.count - 1).accessibilityLabel(Text("Next step"))
-            }
+            Button { go(1) } label: { Image(systemName: "forward.end.fill") }
+                .disabled(index >= steps.count - 1).accessibilityLabel(Text("Next step"))
             Spacer()
             Text(verbatim: "\(index + 1)/\(steps.count)")
                 .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).frame(width: 52)
@@ -313,34 +303,13 @@ struct ReviewView: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { index = max(0, min(steps.count - 1, index + d)) }
     }
 
-    private var videoMode: Bool { showVideo && !video.isEmpty }
-
-    private func seek(_ seconds: Double) {
-        playing = false
-        videoTime = min(max(videoTime + seconds, video[0].t), video[video.count - 1].t)
-    }
-
     private func autoplay() async {
-        if videoMode { return await playVideo() }
         while playing && !Task.isCancelled {
             try? await Task.sleep(nanoseconds: UInt64(1_200_000_000 / speed))
             guard playing, !Task.isCancelled else { return }
             if index >= steps.count - 1 { playing = false; return }
             withAnimation(reduceMotion ? .none : .spring(response: 0.45, dampingFraction: 0.9)) { index += 1 }
         }
-    }
-
-    /// Video view: a clock runs at real time (times the speed); the frame and the step follow it.
-    private func playVideo() async {
-        guard let end = video.last?.t else { return }
-        var last = now()
-        while playing && !Task.isCancelled && videoTime < end {
-            try? await Task.sleep(nanoseconds: 66_000_000)  // ~15 fps of clock; frames change at their own times
-            guard playing else { return }
-            videoTime = min(end, videoTime + (now() - last) * speed)
-            last = now()
-        }
-        playing = false
     }
 
     // MARK: - bottom
@@ -412,8 +381,12 @@ struct StepDetails: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Divider().padding(.vertical, Space.xs)
-            if let t = step.action["thought"]?.str { row("THINK", t) }
-            row("DO", PyJSON.dumps(Actions.key(step.action).without(["plan", "plan_zh"]), ascii: false))
+            if let cycle = step.action["planIndex"]?.double { row("PLAN", String(format: "%.0f", cycle)) }
+            if let target = step.action["target"]?.str { row("TARGET", target) }
+            if let point = step.action["sdkPoint"] { row("PIXELS", PyJSON.dumps(point, ascii: false)) }
+            if let params = StepText.reportParameters(step.action) { row("PARAMS", params) }
+            if let t = step.action["thought"]?.str { row("PLAN", t) }
+            row(step.action["sdkAction"] != nil ? "HID" : "DO", PyJSON.dumps(Actions.key(step.action).without(["plan", "plan_zh"]), ascii: false))
             if let c = step.action["changed"]?.bool { row("CHANGED", c ? "yes" : "no") }
             let think = step.action["think_s"]?.double, act = step.action["act_s"]?.double
             if think != nil || act != nil {

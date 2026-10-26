@@ -10,12 +10,14 @@ extension AppModel {
     /// Leaves our own app without touching the screen: the board's Cmd+H, then its home flick as a fallback.
     /// The model is never asked to do this.
     func leaveApp() async -> Bool {
-        for method in ["cmd+h", "home swipe"] {
+        for method in ["homescreen", "cmd+h", "home swipe"] {
+            if Task.isCancelled { return false }
             if inBackground { return true }
             do {
                 switch method {
+                case "homescreen": try await board.commands.send("homescreen")
                 case "cmd+h": try await pointer.key("cmd+h")
-                default: try await pointer.goHome()
+                default: try await pointer.swipe(0.5, 0.995, 0.5, 0.45, hold: false)
                 }
             } catch {
                 DebugLog.write("leave app: \(method) failed: \(error.localizedDescription)")
@@ -41,7 +43,6 @@ extension AppModel {
         guard UIApplication.shared.applicationState == .active, agent.running, !MockMode.on else { return }
         let ours = now() - agent.lastActed < 3 || now() - resumeAsked < 5
         DebugLog.write("run: ESP32 Agent is in front (\(ours ? "after an agent action" : "opened by the user")); holding")
-        let since = now()
         var away = false
         if ours { away = await leaveApp() }
         if !away {
@@ -57,7 +58,7 @@ extension AppModel {
                 try await Task.sleep(nanoseconds: 300_000_000)
             }
         }
-        _ = await feed.fresh(since: since, timeout: 3)  // a frame of the screen that is in front now
+        _ = try await feed.image(after: now())  // Do not reuse our own screen after returning Home.
         await feed.settled()
         DebugLog.write("run: app in background again, going on")
     }
@@ -65,7 +66,7 @@ extension AppModel {
     private func waitForBackground(_ seconds: Double) async -> Bool {
         let deadline = now() + seconds
         while !inBackground {
-            if now() > deadline { return false }
+            if Task.isCancelled || now() > deadline { return false }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return true

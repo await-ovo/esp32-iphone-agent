@@ -1,12 +1,21 @@
 import Foundation
 
 /// Demo data for looking at the UI without a board: launch with `-mock`, or turn on Settings > Demo data
-/// (takes effect on the next launch). Walks the whole setup (board found → paired → mirroring → calibrated),
+/// (takes effect on the next launch). Walks the whole setup (board found → paired → sharing → calibrated),
 /// has one finished run to replay, and Start plays a fake run with a Live Activity. Nothing reaches a phone.
 enum MockMode {
     static let key = "demoData"
     /// Read once at launch, so turning the switch on mid-session never mixes real and fake state.
     static let on: Bool = ProcessInfo.processInfo.arguments.contains("-mock") || UserDefaults.standard.bool(forKey: key)
+
+    /// The same action payload consumed from Midscene progress events, without dispatching input.
+    static func action(_ step: JObject) -> [String: Any]? {
+        guard let name = ["tap": "Tap", "type": "Input", "swipe": "Swipe"][step["action"]?.str ?? ""] else { return nil }
+        var action: [String: Any] = ["name": name]
+        if let target = step["target"]?.str { action["target"] = target }
+        if name == "Input" { action["param"] = ["value": step["text"]?.str ?? "", "mode": "typeOnly"] }
+        return action
+    }
 }
 
 extension AppModel {
@@ -26,13 +35,10 @@ extension AppModel {
                 up += 1000
                 if self.settings.onboarded && !self.board.connected { self.mockReady() }  // setup skipped with "Later"
                 if self.board.connected {
-                    if self.mockMirroring && self.feed.frame == nil { self.showMockFrame() }
-                    self.board.mockStatus(Self.status(up: up, n: n, mirroring: self.mockMirroring))
+                    if self.feed.frame == nil { self.showMockFrame() }
+                    self.board.mockStatus(Self.status(up: up))
                 }
-                self.metrics.videoBytes(Int.random(in: 38_000...46_000))
-                for _ in 0..<5 { self.metrics.frameDecoded(ms: Double.random(in: 3.5...6)) }
-                if n % 2 == 0 { self.metrics.idrSeen() }
-                if n % 4 == 0 { self.metrics.snapLatency(Double.random(in: 420...690)) }
+                self.metrics.frameCaptured(ms: 20, age: 0.03)
                 if n % 3 == 0 {
                     self.metrics.llm(first: Double.random(in: 0.35...0.6), total: Double.random(in: 1.2...2.1))
                     self.metrics.step(Metrics.Step(frameMs: .random(in: 300...520), llmMs: .random(in: 1200...2100),
@@ -47,23 +53,12 @@ extension AppModel {
     /// Demo data after setup: everything is ready, whatever was skipped.
     func mockReady() {
         if !board.connected {
-            board.mockConnect(name: "ESP32 Agent 7C3E",
-                              net: NetConfig(mode: "ap", ssid: "ESP32Agent-7C3E", pass: nil, ip: "192.168.4.1"))
+            board.mockConnect(name: "ESP32 Agent 7C3E")
         }
-        hotspotSSID = "ESP32Agent-7C3E"
-        mockMirroring = true
         modelOK = true
         if feed.frame == nil { showMockFrame() }
-        board.mockStatus(Self.status(up: 812_000, n: 0, mirroring: true))
+        board.mockStatus(Self.status(up: 812_000))
         if !pointer.calibrated { pointer.mockCalibrated(quality: 0.006) }
-    }
-
-    /// Demo: Screen Mirroring "starts" a moment after the hotspot is joined.
-    func mockStartMirroring() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            self?.mockMirroring = true
-        }
     }
 
     private func showMockFrame() {
@@ -74,19 +69,17 @@ extension AppModel {
         Bundle.main.url(forResource: "mock-frame", withExtension: "jpg").flatMap { try? Data(contentsOf: $0) }
     }
 
-    /// Plays the demo steps as a run: trace and video on disk, Live Activity, one "needs your help" pause,
+    /// Plays the demo steps as a run: trace screenshots on disk, Live Activity, one "needs your help" pause,
     /// notifications, then the review.
     func mockRun(_ task: String) {
         guard !agent.running else { return }
         traces.start(task: task)
         agent.showMock(task: task, plan: "", steps: [], running: true)
         began(task)
-        let video = traces.dir?.appendingPathComponent("video")
-        if let video { try? FileManager.default.createDirectory(at: video, withIntermediateDirectories: true) }
         mockJob = Task { [weak self] in
             var shown: [JObject] = []
             for (i, step) in (Self.mockSteps + [["action": .str("done"), "answer": .str("The alarm is saved.")]]).enumerated() {
-                self?.doing(.thinking)  // the island's eyes dart while the "model" thinks, then look at the target
+                self?.mockProgress(["phase": "plan_thinking"])
                 try? await Task.sleep(nanoseconds: 2_400_000_000)
                 guard let self, !Task.isCancelled, self.agent.running else { break }
                 if i == 6 {  // a demo of the help pause
@@ -100,19 +93,25 @@ extension AppModel {
                     shown.append(rec)
                     if choice == .stop { break }
                 }
-                if !StepText.notMoves.contains(step["action"]?.str ?? "") {
-                    self.doing(.acting(step))
+                if step["action"]?.str == "plan" {
+                    self.mockProgress(["phase": "plan_planned", "text": Self.mockPlan])
+                } else if let action = MockMode.action(step) {
+                    self.mockProgress(["phase": "plan_action", "action": action])
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled, self.agent.running else { break }
+                    self.mockProgress(["phase": "action_running", "action": action])
                     try? await Task.sleep(nanoseconds: 900_000_000)
                 }
                 guard !Task.isCancelled, self.agent.running else { break }
                 self.traces.write(Self.mockFrame, kind: "llm", ["role": .str("actor"), "seconds": .num(1.3)])
                 self.traces.write(kind: "step", step.merging(["think_s": .num(1.3), "act_s": .num(0.4)]))
-                if let video, let frame = Self.mockFrame {
-                    try? frame.write(to: video.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000)).jpg"))
-                }
+
                 shown.append(JObject([("t", .num(now()))]).merging(step))
                 self.agent.showMock(task: task, plan: Self.mockPlan, steps: shown, running: true)
                 self.stepped()
+                if let action = MockMode.action(step) {
+                    self.mockProgress(["phase": "action_done", "action": action])
+                }
             }
             guard let self else { return }
             if (Task.isCancelled || !self.agent.running) && shown.last?["action"]?.str != "stopped" {
@@ -122,6 +121,11 @@ extension AppModel {
             self.agent.showMock(task: task, plan: Self.mockPlan, steps: shown, running: false)
             self.ended()
         }
+    }
+
+    private func mockProgress(_ event: [String: Any]) {
+        guard let status = IslandStatus.progress(event) else { return }
+        doing(.progress(status))
     }
 
     /// One finished run in the demo traces folder, so Runs and the replay player have something to show.
@@ -139,9 +143,7 @@ extension AppModel {
                 let name = String(format: "%03d.jpg", n)
                 try? frame.write(to: dir.appendingPathComponent(name))
                 line["frame"] = .str(name)
-                let video = dir.appendingPathComponent("video")
-                try? FileManager.default.createDirectory(at: video, withIntermediateDirectories: true)
-                try? frame.write(to: video.appendingPathComponent("\(Int(t * 1000)).jpg"))
+
             }
             lines.append(PyJSON.dumps(line, ascii: false))
         }
@@ -155,12 +157,9 @@ extension AppModel {
                                                           atomically: true, encoding: .utf8)
     }
 
-    private static func status(up: Int, n: Int, mirroring: Bool) -> BoardStatus {
-        BoardStatus(up: up, rst: "power-on", heap: 81_234 - n % 7 * 120, psram: 6_200_000, usb: "ok",
-                    net: "ap", ip: "192.168.4.1", sta: 1, ap: mirroring ? "streaming" : "idle", w: 480, h: 1040,
-                    kbps: Double.random(in: 150...230), fps: Double.random(in: 4.4...5), idr: 2000,
-                    gop: 42_000 + n % 5 * 3000,
-                    ble: .init(mtu: 247, phy: 2, kbps: Double.random(in: 320...380), drop: n / 30))
+    private static func status(up: Int) -> BoardStatus {
+        BoardStatus(up: up, rst: "power-on", heap: 81_234, hid: "ok", hgen: 1,
+                    ble: .init(mtu: 247, phy: 1, rdrop: 0, n: 1))
     }
 
     static let mockPlan = """

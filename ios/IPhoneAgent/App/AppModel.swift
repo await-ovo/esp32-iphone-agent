@@ -15,7 +15,7 @@ import UIKit
 
     let settings = Settings()
     let board = BoardLink(mock: MockMode.on)
-    let feed = VideoFeed()
+    let feed = ScreenCaptureFeed()
     let metrics = Metrics()
     let traces = MockMode.on
         ? TraceStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("demo-traces"))
@@ -23,7 +23,7 @@ import UIKit
     let intents = IntentStore()
     private(set) lazy var runs = RunStore(traces: traces)
     let pointer: Pointer
-    let agent: AgentLoop
+    let agent: MidsceneController
     @Published private(set) var log: [LogLine] = []
     @Published var refreshingStatus = false
     @Published var statusRefreshError: String?
@@ -34,8 +34,6 @@ import UIKit
     @Published var modelFirstTokenSeconds: Double?
     @Published var modelResponseSeconds: Double?
     @Published var modelOK: Bool?  // last LLM ping result
-    @Published var hotspotSSID: String?
-    @Published var otherWiFi: String?  // the phone is on this network, not the board's
     /// The character's mood during and right after a run; nil = resting (idle or sleeping, see `mood`).
     @Published var runMood: Mood?
     @Published var tab = AppTab.agent
@@ -45,7 +43,7 @@ import UIKit
     @Published var review: ReviewDraft?
     /// Paused for the user: why (nil = not paused), and whether they are doing it by hand right now.
     @Published var help: String?
-    @Published var recovering: Recovery.Stage?  // the run is paused for a lost link (board, hotspot, mirroring)
+    @Published var recovering: Recovery.Stage?  // the run is paused for a lost link (board, HID or screen sharing)
     var recoverySince = Date()
     @Published var takingOver = false
     @Published var departing = false  // the character's take-off before a run
@@ -56,23 +54,21 @@ import UIKit
     let live = LiveActivityController()
     let notifier = Notifier()
     private(set) lazy var recorder = DemoRecorder(app: self)
+    var startingJob: Task<Void, Never>?
     var mockJob: Task<Void, Never>?
-    @Published var mockMirroring = false
     var moodReset: Task<Void, Never>?
-    var helpWait: CheckedContinuation<AgentLoop.HelpChoice, Never>?
+    var helpWait: CheckedContinuation<MidsceneController.HelpChoice, Never>?
     var currentIntent: SavedTask?
     var lastTask = ""
     var runStarted = Date()
     private var settingsSink: AnyCancellable?
-    var videoSink: AnyCancellable?
-    var videoDir: URL?
     private(set) lazy var calibrator = AutoCalibrator(app: self)
     let probe = TouchProbe()
     private var lastStatus = ""
     private var lastTick = now()
     private var lastStreamLog = 0.0
     private var timers: [Task<Void, Never>] = []
-    var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var hidGeneration: UInt32?
     var lastWidgetReload = 0.0
 
     init() {
@@ -80,9 +76,8 @@ import UIKit
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         pointer = Pointer(device: board.commands, calibrationFile: support.appendingPathComponent("calibration.json"),
                           screen: feed)
-        agent = AgentLoop(phone: pointer, screen: feed, actor: nil, planner: nil, trace: traces)
+        agent = MidsceneController(phone: pointer, screen: feed, trace: traces)
         agent.metrics = metrics
-        feed.device = board.commands
         feed.metrics = metrics
 
         let say: (String) -> Void = { [weak self] in self?.say($0) }
@@ -106,30 +101,24 @@ import UIKit
             self?.modelFirstTokenSeconds = nil
             self?.modelResponseSeconds = nil
         }
-        board.onVideo = { [weak self] in self?.feed.receive($0) }
         board.onStatus = { [weak self] s in
             self?.statusRefreshError = nil
-            self?.feed.mirroring = s.ap == "streaming"
-            if let up = s.up { self?.feed.boardClock(ms: up) }
+            self?.pointer.useTransport("ble")
+            if let generation = s.hgen, self?.hidGeneration != generation {
+                self?.pointer.invalidatePosition()
+                self?.hidGeneration = generation
+            }
             self?.metrics.status(s)
             self?.logStatus(s)
         }
-        board.onLinkUp = { [weak self] in
-            guard let self else { return }
-            feed.resetStream()
-            metrics.mtu = board.mtu
-            if agent.running && !MockMode.on && FrameMode.current == .stream {  // the board forgot `stream on`: the paused run needs the screen back
-                Task { [weak self] in
-                    do { try await self?.feed.stream(true); DebugLog.write("recover: BLE back, stream on again") } catch {
-                        DebugLog.write("recover: stream on after reconnect failed: \(error.localizedDescription)")
-                    }
-                }
-            }
+        board.onLinkUp = { [weak self] in self?.metrics.mtu = self?.board.mtu ?? 0 }
+        feed.onStopped = { [weak self] reason in
+            guard let self, self.agent.running else { return }
+            self.say("capture unavailable: \(reason)")
+            self.live.show(.captureStopped, mood: .listening)
         }
-        board.onLinkDown = { [weak self] in self?.feed.linkLost() }
-        board.commands.onTimeout = { [weak self] command in await self?.commandTimedOut(command) }
-        DebugLog.write("frame mode: \(FrameMode.current.rawValue)")
         board.commands.onTiming = { [weak self] name, ms in self?.metrics.hidMs[name] = ms }
+        agent.onCleanup = { [weak self] in await self?.feed.stop() }
         agent.onFinish = { [weak self] in self?.agentFinished() }
         agent.onStep = { [weak self] in self?.stepped() }
         agent.onDoing = { [weak self] d in self?.doing(d) }
@@ -167,35 +156,18 @@ import UIKit
         lastTick = now()
         publishWidget()
         if metrics.suspensions > before { DebugLog.write(String(format: "app: resumed after %.0f s suspended", gap)) }
-        if agent.running, now() - lastStreamLog >= 10 {
+        if agent.running || startingAgent, now() - lastStreamLog >= 10 {
             lastStreamLog = now()
-            let s = board.status
-            DebugLog.write(String(format: "stream: decoded %.1f fps, BLE in %.0f kbps (board %.0f kbps out, AirPlay %.0f kbps %.1f fps), frame age %.1f s, drops %d",
-                                  metrics.fps, metrics.bleKbps, s?.ble?.kbps ?? 0, s?.kbps ?? 0, s?.fps ?? 0,
-                                  feed.updated > 0 ? now() - feed.updated : -1, metrics.drops))
+            DebugLog.write(String(format: "capture: %.1f fps, JPEG %.1f ms, frame age %.3f s, sharing %@",
+                                  metrics.fps, metrics.captureMs, feed.updated > 0 ? now() - feed.capturedAt : -1,
+                                  String(feed.capturing)))
         }
-    }
-
-    /// A command timed out: video may be starving the board's control traffic. Stop the stream and run
-    /// snap-per-step for the rest of this run (the next run streams again).
-    private func commandTimedOut(_ command: String) async {
-        DebugLog.write("cmd timeout on '\(command.prefix(30))': stream off, snap-per-step for this run")
-        FrameMode.fallback = .snap
-        if feed.streamOn { _ = try? await feed.stream(false) }
-    }
-
-    func setFrameMode(_ mode: FrameMode) {
-        FrameMode.current = mode
-        say("frame mode: \(mode.rawValue)")
-        if mode == .stream && agent.running { Task { try? await feed.stream(true) } }
-        if mode == .snap && feed.streamOn { Task { try? await feed.stream(false) } }
     }
 
     /// The run paused for the board (line) or goes on (nil).
     /// Board status changes go to the debug log (not every identical notify).
     private func logStatus(_ s: BoardStatus) {
-        let line = "board status: ap \(s.ap ?? "-") usb \(s.usb ?? "-") sta \(s.sta.map(String.init) ?? "-")"
-            + " screen \(s.w.map(String.init) ?? "-")x\(s.h.map(String.init) ?? "-") rst \(s.rst ?? "-")"
+        let line = "board status: hid \(s.inputState) rst \(s.rst ?? "-")"
         guard line != lastStatus else { return }
         lastStatus = line
         DebugLog.write(line)
@@ -210,6 +182,7 @@ import UIKit
     /// The model endpoint is filled in (demo data simulates one).
     var modelReady: Bool {
         MockMode.on || (settings.isConfigured && settings.currentModel != nil
+            && !settings.modelFamily.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (settings.provider == .others || !settings.apiKey.isEmpty))
     }
 
@@ -220,28 +193,13 @@ import UIKit
 
     // MARK: - setup and diagnostics
 
-    /// The one-tap join of the board's Wi-Fi (state machine in HotspotJoin.swift).
-    @Published var join = JoinState.idle
-    var joinTask: Task<Void, Never>?
-
-    /// Set when one-tap join failed: the user joins in Settings with the shown password.
-    @Published var manualHotspot: NetConfig?
-
-    func bench(kb: Int = 256) async {
+    func captureTest() async {
+        guard !startingAgent, !agent.running || recovering?.part == .screen else { return }
         do {
-            let reply = try await board.commands.send("bench \(kb)")
-            let ms = Double(reply.split(separator: " ").first ?? "") ?? 0
-            metrics.benchKbps = ms > 0 ? Double(kb) * 8 * 1024 / ms : nil
-            say(String(format: "BLE bench: %d KB in %.0f ms", kb, ms))
-        } catch {
-            say("bench: \(error.localizedDescription)")
-        }
-    }
-
-    func snapTest() async {
-        do { say(String(format: "snap -> decoded in %.0f ms", try await feed.snap())) } catch {
-            say("snap: \(error.localizedDescription)")
-        }
+            if feed.capturing && !feed.live { await feed.stop() }
+            try await feed.start()
+            say("capture: \(Int(feed.size.width))x\(Int(feed.size.height))")
+        } catch { say("capture: \(error.localizedDescription)") }
     }
 
     /// Shared by pull-to-refresh and character interactions; rapid pokes coalesce.
@@ -282,7 +240,7 @@ import UIKit
             if revision == settings.configurationRevision { modelTestSeconds = now() - started }
         }
         do {
-            let client = try await settings.client("actor")
+            let client = try await settings.client()
             let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
                 UIColor.red.setFill()
                 context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
@@ -305,23 +263,4 @@ import UIKit
         }
     }
 
-    /// Ping the LLM every 2 s for `seconds` (switch to another app meanwhile) and report what survived.
-    func backgroundTest(seconds: Double = 600) async {
-        let id = UIApplication.shared.beginBackgroundTask(withName: "bgtest")
-        defer { UIApplication.shared.endBackgroundTask(id) }
-        guard let client = try? await settings.client("actor") else { return say("background test: no model") }
-        let started = now()
-        var ok = 0, failed = 0, decodedBefore = metrics.decodeErrors
-        say("background test: \(Int(seconds)) s, switch to another app now")
-        try? await feed.stream(true)
-        while now() - started < seconds && !Task.isCancelled {
-            do { _ = try await client.chat(system: "Reply with OK.", text: "ping", image: nil, maxTokens: 600, temperature: 0); ok += 1 }
-            catch { failed += 1 }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-        }
-        try? await feed.stream(false)
-        decodedBefore = metrics.decodeErrors - decodedBefore
-        say("background test: LLM \(ok) ok / \(failed) failed, decode errors \(decodedBefore), "
-            + "suspensions \(metrics.suspensions), background alive \(Int(metrics.backgroundAlive)) s")
-    }
 }

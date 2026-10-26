@@ -28,10 +28,11 @@ extension AppModel {
         guard !task.isEmpty else { return String(localized: "The task is empty.") }
         if agent.running { return String(localized: "Already running: \(agent.task)") }
         if !MockMode.on {
+            guard DeviceScreen.foreground else { return String(localized: "Open ESP32 Agent to allow screen sharing and start the task.") }
             guard settings.isConfigured else { return String(localized: "Set up the model in Settings first.") }
             guard pointer.calibrated else { return String(localized: "Calibrate the pointer in ESP32 Agent first.") }
-            guard await waitReady(mirroring: true, timeout: 20) else {
-                return String(localized: "The board or Screen Mirroring isn't ready. Connect the board and start Screen Mirroring.")
+            guard await waitReady(timeout: 20) else {
+                return String(localized: "Connect the Bluetooth mouse before starting.")
             }
         }
         await run(task, intent: intent)
@@ -40,14 +41,13 @@ extension AppModel {
         return String(localized: "Could not start: \(log.last?.text ?? "")")
     }
 
-    /// Board, mirroring, calibration, model and run, for Siri and the status snippet.
+    /// Board, screen sharing, calibration, model and run, for Siri and the status snippet.
     var statusLines: [String] {
-        let s = board.status
         var lines: [String] = []
         if MockMode.on { lines.append(String(localized: "Demo data is on.")) }
         lines.append(board.connected ? String(localized: "Board connected") : String(localized: "Board not connected"))
-        lines.append(feed.live || s?.ap == "streaming" ? String(localized: "Screen Mirroring on")
-                     : String(localized: "Screen Mirroring off"))
+        lines.append(feed.capturing ? String(localized: "Screen sharing on")
+                     : String(localized: "Screen sharing off"))
         if pointer.calibrated {
             lines.append(pointer.quality.map { String(localized: "Calibrated, \(CalibrationText.percent($0))") }
                          ?? String(localized: "Calibrated"))

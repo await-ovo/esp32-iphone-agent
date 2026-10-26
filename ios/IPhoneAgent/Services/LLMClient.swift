@@ -124,14 +124,6 @@ struct LLMError: LocalizedError {
         return result
     }
 
-    /// The first model id from GET {base}/models.
-    static func firstModel(baseURL: String, apiKey: String) async throws -> String {
-        guard let id = try await models(baseURL: baseURL, apiKey: apiKey).first else {
-            throw LLMError(message: "the endpoint lists no models; type a model id in Settings › Model")
-        }
-        return id
-    }
-
     /// The model ids from GET {base}/models (OpenAI list format: {"data": [{"id": ...}]}), in the endpoint's order.
     static func models(baseURL: String, apiKey: String) async throws -> [String] {
         var trimmed = baseURL

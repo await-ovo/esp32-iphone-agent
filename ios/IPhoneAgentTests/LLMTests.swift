@@ -47,18 +47,16 @@ final class StubProtocol: URLProtocol {
         let name = "provider-test-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
-        let settings = Settings(defaults: defaults, info: [:])
+        let settings = Settings(defaults: defaults, info: [:], credentialNamespace: "test-" + UUID().uuidString)
         settings.selectProvider(.openRouter)
         settings.model = "openrouter/free"
         XCTAssertEqual(settings.baseURL, "https://openrouter.ai/api/v1")
         let model = try await settings.resolvedModel()
         XCTAssertEqual(model, "openrouter/free")
-        settings.plannerModel = "old-planner"
-        settings.actorModel = "old-actor"
+        settings.modelFamily = "old-family"
         settings.selectProvider(.openAI)
         XCTAssertEqual(settings.model, "")
-        XCTAssertEqual(settings.actorModel, "")
-        XCTAssertEqual(settings.plannerModel, "")
+        XCTAssertEqual(settings.modelFamily, "")
         do { _ = try await settings.resolvedModel(); XCTFail("Must explicitly choose a model") } catch {}
         settings.selectProvider(.others)
         settings.baseURL = "http://192.168.1.4:8080/v1"
@@ -69,6 +67,27 @@ final class StubProtocol: URLProtocol {
         XCTAssertEqual(settings.provider, .others)
         settings.baseURL = "httpjunk://endpoint"
         XCTAssertFalse(settings.isConfigured)
+    }
+
+    func testCredentialNamespacesDoNotOverwriteAnotherSettingsInstance() throws {
+        let suite = "credentials-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let first = suite + "-first-", second = suite + "-second-"
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            Keychain.set("", for: first + "llm-api-key")
+            Keychain.set("", for: second + "llm-api-key")
+        }
+        let original = Settings(defaults: defaults, info: nil, credentialNamespace: first)
+        original.apiKey = "fixture-original"
+        guard Keychain.get(first + "llm-api-key") == "fixture-original" else {
+            throw XCTSkip("Keychain requires a signed test host on this platform")
+        }
+        let other = Settings(defaults: defaults, info: nil, credentialNamespace: second)
+        XCTAssertEqual(other.apiKey, "")
+        other.apiKey = "fixture-other"
+        other.baseURL = "https://example.com/v1"
+        XCTAssertEqual(Keychain.get(first + "llm-api-key"), "fixture-original")
     }
 
     func testImageCheckDoesNotTreatSubstringsOrNegationAsSuccess() throws {
@@ -85,7 +104,7 @@ final class StubProtocol: URLProtocol {
         defaults.set("openRouterFree", forKey: "modelProvider")
         defaults.set(ModelProvider.openRouter.baseURL, forKey: "baseURL")
         defaults.set("openrouter/free", forKey: "model")
-        let settings = Settings(defaults: defaults, info: [:])
+        let settings = Settings(defaults: defaults, info: [:], credentialNamespace: "test-" + UUID().uuidString)
         XCTAssertEqual(settings.provider, .openRouter)
         XCTAssertEqual(settings.currentModel, "openrouter/free")
     }

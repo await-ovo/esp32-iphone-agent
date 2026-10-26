@@ -1,28 +1,32 @@
 import UIKit
 
-/// Touch-probe calibration, like levelling a 3D printer bed: home the pointer, click at known mouse
-/// distances and catch where each click lands on this app's own screen. Stage 1 clicks twice on the
-/// diagonal for a rough fit; stage 2 clicks near the four corners (25% / 75%) and the centre, all from home,
-/// and fits mouse units → screen fraction per axis by least squares; stage 3 taps a check point.
+/// Every sample uses Pointer's home → horizontal → vertical positioning. Repeated grid samples fit
+/// the mapping; separate edge and weather-task targets must then pass before the mapping is saved as valid.
 extension AutoCalibrator {
     enum TouchResult { case done(Double), noTaps, failed(String) }
 
     static let roughStops = [150, 350]
-    static let targets: [(Double, Double)] = [(0.25, 0.25), (0.75, 0.25), (0.5, 0.5), (0.25, 0.75), (0.75, 0.75)]
-    static let check = (x: 0.5, y: 0.62)
+    static let targets: [(Double, Double)] = [0.12, 0.5, 0.88].flatMap { y in [0.12, 0.5, 0.88].map { x in (x, y) } }
+    static let repetitions = 2
+    static let verificationTargets: [(Double, Double)] = [
+        (0.2, 0.2), (0.8, 0.2), (0.5, 0.62), (0.2, 0.8), (0.8, 0.8),
+        (829.0 / 960, 1961.0 / 2078), (110.0 / 960, 182.0 / 2078)
+    ]
     static let tapTimeout = 3.0
 
     func touchCalibrate(full: Bool) async throws -> TouchResult {
         let probe = app.probe, device = app.board.commands, pointer = app.pointer
-        var total = full ? Self.roughStops.count + Self.targets.count + 1 : 1
+        let total = (full ? Self.roughStops.count + Self.targets.count * Self.repetitions : 0) + Self.verificationTargets.count
         var clicks = 0, hits = 0
+        var accepted = false
+        defer { if !accepted { pointer.clearCalibration() } }
+        if full { pointer.clearCalibration() }
         phase = .homing
         try await pointer.reset()
 
-        /// Home, move by (ux, uy), click and wait for the tap. Every probe starts from home, like the agent's moves.
+        /// The same positioning path is used for samples and real taps.
         func click(_ ux: Int, _ uy: Int) async throws -> CGPoint? {
-            try await device.send("home")
-            try await device.send("move \(ux) \(uy)")
+            try await pointer.positionFromHome(ux, uy)
             let sent = now()
             try await device.send("click")
             let p = await probe.tap(since: sent, timeout: Self.tapTimeout)
@@ -41,33 +45,44 @@ extension AutoCalibrator {
         }
 
         /// A click that never reached the app probably hit the AssistiveTouch button and opened its menu:
-        /// remember the spot and close the menu (esc, then a click on an empty area, which the probe swallows).
-        func missed(at fx: Double, _ fy: Double, empty: (Int, Int)?) async {
-            AssistiveTouchSpots.remember(x: fx, y: fy)
+        /// close the menu (esc, then a click on an empty area, which the probe swallows).
+        func missed(empty: (Int, Int)?) async {
             _ = try? await device.send("key esc")
             if let (ex, ey) = empty {
-                _ = try? await device.send("home")
-                _ = try? await device.send("move \(ex) \(ey)")
+                try? await pointer.positionFromHome(ex, ey)
                 _ = try? await device.send("click")
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
 
-        if !full {  // quick check after a reconnect: one tap at the check point
+        func verify() async throws -> TouchResult {
             phase = .verifying
             guard pointer.calibrated else { return .failed("not calibrated") }
-            try await pointer.point(Self.check.x, Self.check.y)
-            let sent = now()
-            try await device.send("click")
-            guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else { return .noTaps }
-            let error = max(abs(p.x - Self.check.x), abs(p.y - Self.check.y))
-            app.say(String(format: "probe check: ±%.1f%%", error * 100))
-            if error <= Self.tolerance {
-                pointer.setQuality(error)
-                return .done(error)
+            var worst = 0.0
+            for (fx, fy) in Self.verificationTargets {
+                try await pointer.point(fx, fy)
+                let sent = now()
+                try await device.send("click")
+                guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else {
+                    return .failed(String(localized: "A verification tap was not received. Move the AssistiveTouch button away and try again."))
+                }
+                try Task.checkCancellation()
+                clicks += 1
+                progress = Progress(done: clicks, total: total)
+                let error = max(abs(p.x - fx), abs(p.y - fy))
+                app.say(String(format: "probe verify (%.3f, %.3f): landed (%.3f, %.3f), error %.2f%%", fx, fy, p.x, p.y, error * 100))
+                worst = max(worst, error)
             }
-            return try await touchCalibrate(full: true)
+            guard worst.isFinite, worst <= Self.tolerance else {
+                return .failed(String(localized: "Pointer verification failed: worst error \(String(format: "%.1f", worst * 100))%. Calibrate again."))
+            }
+            pointer.setQuality(worst)
+            accepted = true
+            app.say(String(format: "probe verified: %d independent points, worst %.2f%%", Self.verificationTargets.count, worst * 100))
+            return .done(worst)
         }
+
+        if !full { return try await verify() }
 
         var samples: [(ux: Double, uy: Double, fx: Double, fy: Double)] = []
         func record(_ ux: Int, _ uy: Int, _ p: CGPoint?) {
@@ -81,7 +96,7 @@ extension AutoCalibrator {
             return (x, y)
         }
 
-        // stage 1: rough, on the diagonal
+        // Stage 1: coarse distances, with the same separated axes as production positioning.
         phase = .probeA
         for u in Self.roughStops {
             let p = try await click(u, u)
@@ -91,21 +106,30 @@ extension AutoCalibrator {
         }
         guard let rough = lines() else { return .failed("probe taps stuck at the screen edge") }
 
-        // stage 2: corners and centre
+        // Stage 2: repeated grid samples; reject unstable movement rather than fitting its average.
         phase = .probeB
         let empty = (rough.0.units(for: 0.5), rough.1.units(for: 0.12))
         for (fx, fy) in Self.targets {
             let ux = rough.0.units(for: fx), uy = rough.1.units(for: fy)
-            guard ux > 0, uy > 0 else { continue }
-            if let p = try await click(ux, uy) { record(ux, uy, p); continue }
-            await missed(at: fx, fy, empty: empty)
-            // replace the probe with one a little closer to the centre
-            let rx = fx + (0.5 - fx) * 0.4, ry = fy + (0.5 - fy) * 0.4
-            guard rx != fx || ry != fy else { continue }
-            let vx = rough.0.units(for: rx), vy = rough.1.units(for: ry)
-            total += 1
-            app.say(String(format: "probe replaced: (%.2f, %.2f) → (%.2f, %.2f)", fx, fy, rx, ry))
-            if let p = try await click(vx, vy) { record(vx, vy, p) } else { await missed(at: rx, ry, empty: empty) }
+            guard ux > 0, uy > 0 else { return .failed("Calibration fit cannot reach the grid") }
+            var previous: CGPoint?
+            for _ in 0..<Self.repetitions {
+                guard let p = try await click(ux, uy) else {
+                    await missed(empty: empty)
+                    return .failed(String(localized: "A calibration tap was not received. Move the AssistiveTouch button away and try again."))
+                }
+                try Task.checkCancellation()
+                guard ProbeFit.usable(p.x), ProbeFit.usable(p.y) else { return .failed("Calibration tap reached the screen edge") }
+                if let previous {
+                    let spread = max(abs(p.x - previous.x), abs(p.y - previous.y))
+                    app.say(String(format: "probe repeat (%.2f, %.2f): spread %.2f%%", fx, fy, spread * 100))
+                    guard spread <= Self.tolerance else {
+                        return .failed(String(localized: "Repeated pointer positions are unstable. Calibrate again."))
+                    }
+                }
+                previous = p
+                record(ux, uy, p)
+            }
         }
         guard samples.count >= 4, let (lx, ly) = lines() else {
             return .failed("only \(samples.count) of \(clicks) probe clicks arrived")
@@ -114,27 +138,14 @@ extension AutoCalibrator {
                        lx.a, lx.b, ly.a, ly.b, lx.rms * 100, ly.rms * 100,
                        "\(Int(DeviceScreen.size.width))×\(Int(DeviceScreen.size.height)) pt @\(Int(DeviceScreen.scale))x"))
         pointer.applyProbe(x: lx, y: ly, samples: samples)
-
-        // stage 3: check with the agent's own move
-        phase = .verifying
-        try await pointer.point(Self.check.x, Self.check.y)
-        let sent = now()
-        try await device.send("click")
-        clicks += 1
-        progress = Progress(done: clicks, total: total)
-        guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else { return .done(max(lx.rms, ly.rms)) }
-        let error = max(abs(p.x - Self.check.x), abs(p.y - Self.check.y))
-        pointer.setQuality(error)
-        app.say(String(format: "probe check at (%.2f, %.2f): landed (%.3f, %.3f), ±%.1f%%", Self.check.x, Self.check.y,
-                       p.x, p.y, error * 100))
-        return .done(error)
+        return try await verify()
     }
 }
 
 extension AppModel {
-    /// Ask the vision model where the pointer is on a mirrored frame (fallback for calibration).
+    /// Ask the vision model where the pointer is on a captured frame (fallback for calibration).
     func locatePointer(_ jpeg: Data) async -> CGPoint? {
-        guard !MockMode.on, settings.isConfigured, let client = try? await settings.client("actor") else { return nil }
+        guard !MockMode.on, settings.isConfigured, let client = try? await settings.client() else { return nil }
         let system = "You find the mouse pointer on iPhone/iPad screenshots. The AssistiveTouch pointer is a small "
             + "round dark grey translucent dot. During calibration the screen is white with a grid: thin lines every "
             + "10% labelled 100-900 along the top and left edges, and coloured squares in the corners. Reply with JSON only: {\"x\": <0-1000>, \"y\": <0-1000>} for its centre, "

@@ -21,7 +21,7 @@ enum RunShare {
         FileManager.default.fileExists(atPath: folder.appendingPathComponent(importedMarker).path)
     }
 
-    /// Copies each run redacted (steps, metrics, review edits, screenshots, video) plus debug.log, then zips it.
+    /// Copies each run redacted (steps, metrics, review edits, screenshots) plus debug.log, then zips it.
     static func export(_ runs: [URL], redactor: Redactor, debugLog: URL?) throws -> Package {
         let fm = FileManager.default
         let stage = fm.temporaryDirectory.appendingPathComponent("iPhone-Agent-runs")
@@ -29,7 +29,7 @@ enum RunShare {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
         for run in runs {
             let out = stage.appendingPathComponent(run.lastPathComponent)
-            try fm.createDirectory(at: out.appendingPathComponent("video"), withIntermediateDirectories: true)
+            try fm.createDirectory(at: out, withIntermediateDirectories: true)
             for name in ["steps.jsonl", "metrics.json", "review.json"] {
                 guard let text = try? String(contentsOf: run.appendingPathComponent(name), encoding: .utf8) else { continue }
                 let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -37,13 +37,10 @@ enum RunShare {
                     : redactor.text(text)
                 try Data(clean.utf8).write(to: out.appendingPathComponent(name))
             }
-            for sub in ["", "video"] {
-                let dir = sub.isEmpty ? run : run.appendingPathComponent(sub)
-                for jpg in ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
-                    where jpg.pathExtension == "jpg" {
-                    if let data = try? Data(contentsOf: jpg), let clean = redactor.image(data) {
-                        try clean.write(to: out.appendingPathComponent(sub).appendingPathComponent(jpg.lastPathComponent))
-                    }
+            for jpg in ((try? fm.contentsOfDirectory(at: run, includingPropertiesForKeys: nil)) ?? [])
+                where jpg.pathExtension == "jpg" {
+                if let data = try? Data(contentsOf: jpg), let clean = redactor.image(data) {
+                    try clean.write(to: out.appendingPathComponent(jpg.lastPathComponent))
                 }
             }
         }
@@ -127,8 +124,7 @@ enum Unzip {
 extension AppModel {
     /// Everything that identifies this setup and must never be exported.
     var shareRedactor: Redactor {
-        let secrets = [settings.apiKey, settings.baseURL, URL(string: settings.baseURL)?.host ?? "",
-                       board.net?.ssid ?? "", board.net?.pass ?? "", hotspotSSID ?? "", manualHotspot?.pass ?? ""]
+        let secrets = [settings.apiKey, settings.baseURL, URL(string: settings.baseURL)?.host ?? ""]
         return Redactor(secrets: secrets.filter { !$0.isEmpty })
     }
 

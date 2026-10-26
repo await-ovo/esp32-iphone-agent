@@ -1,10 +1,10 @@
 import Foundation
 import UserNotifications
 
-/// Local notifications for runs: done / failed / needs help / mirroring lost / board disconnected, with
+/// Local notifications for runs: done / failed / needs help / screen sharing stopped / board disconnected, with
 /// actions (Review, Retry, Stop, Continue, Skip, Take over). Tapping one opens the run's review.
 @MainActor final class Notifier: NSObject, UNUserNotificationCenterDelegate {
-    enum Kind: String { case done, failed, help, takeover, mirroring, board, wifi }
+    enum Kind: String { case done, failed, help, takeover, capture, board, mouse }
     enum Action: String { case review, retry, stop, resume, skip, takeOver }
 
     /// Called with the action (nil = the notification itself was tapped) and the run id.
@@ -29,9 +29,9 @@ import UserNotifications
             UNNotificationCategory(identifier: Kind.failed.rawValue, actions: [review, retry], intentIdentifiers: []),
             UNNotificationCategory(identifier: Kind.help.rawValue, actions: [takeOver, skip, stop], intentIdentifiers: []),
             UNNotificationCategory(identifier: Kind.takeover.rawValue, actions: [resume, stop], intentIdentifiers: []),
-            UNNotificationCategory(identifier: Kind.mirroring.rawValue, actions: [stop, review], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Kind.capture.rawValue, actions: [stop, review], intentIdentifiers: []),
             UNNotificationCategory(identifier: Kind.board.rawValue, actions: [stop, review], intentIdentifiers: []),
-            UNNotificationCategory(identifier: Kind.wifi.rawValue, actions: [stop, review], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Kind.mouse.rawValue, actions: [stop, review], intentIdentifiers: []),
         ])
     }
 
@@ -49,9 +49,10 @@ import UserNotifications
         content.body = body
         content.categoryIdentifier = kind.rawValue
         content.userInfo = ["run": run]
-        let urgent: Set<Kind> = [.help, .mirroring, .board, .wifi]  // the run waits for the user
-        content.sound = urgent.contains(kind) ? .default : nil
-        content.interruptionLevel = urgent.contains(kind) ? .timeSensitive : .active
+        // The Live Activity carries task status. Keep notification history quiet so
+        // banners and sounds do not cover controls the agent is trying to observe.
+        content.sound = nil
+        content.interruptionLevel = .passive
         center.removeDeliveredNotifications(withIdentifiers: [Kind.help.rawValue, Kind.takeover.rawValue])
         center.add(UNNotificationRequest(identifier: kind.rawValue, content: content, trigger: nil))
     }
@@ -60,20 +61,30 @@ import UserNotifications
         center.removeDeliveredNotifications(withIdentifiers: [Kind.help.rawValue, Kind.takeover.rawValue])
     }
 
-    /// The link is back: the "start mirroring / check the board / join Wi-Fi" asks are stale.
+    /// The link is back: the "restart sharing / check the board / connect the mouse" asks are stale.
     func clearLinkAsks() {
-        center.removeDeliveredNotifications(withIdentifiers: [Kind.mirroring.rawValue, Kind.board.rawValue, Kind.wifi.rawValue])
+        center.removeDeliveredNotifications(withIdentifiers: [Kind.capture.rawValue, Kind.board.rawValue, Kind.mouse.rawValue])
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
-        async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        Task { @MainActor in completionHandler([.list]) }
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
         let run = response.notification.request.content.userInfo["run"] as? String ?? ""
         let id = response.actionIdentifier
         let action = id == UNNotificationDefaultActionIdentifier ? nil : Action(rawValue: id)
-        await MainActor.run { onAction?(action, run) }
+        deliver(action, run: run, completion: completionHandler)
+    }
+
+    /// UIKit's completion can update the app snapshot; it must run on the main thread,
+    /// together with the action. The async delegate bridge completed on a worker thread.
+    nonisolated func deliver(_ action: Action?, run: String, completion: @escaping () -> Void) {
+        Task { @MainActor in
+            onAction?(action, run)
+            completion()
+        }
     }
 }

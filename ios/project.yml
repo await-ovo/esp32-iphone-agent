@@ -2,7 +2,7 @@ name: IPhoneAgent
 options:
   developmentLanguage: en
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "27.0"
 configFiles:
   Debug: Config/Shared.xcconfig
   Release: Config/Shared.xcconfig
@@ -18,7 +18,7 @@ targets:
     sources:
       - IPhoneAgent
       - Shared
-      - path: ../prompts  # the model prompts, bundled as a folder
+      - path: Midscene/Resources/Midscene
         type: folder
         buildPhase: resources
     dependencies:
@@ -42,8 +42,9 @@ targets:
             CFBundleURLSchemes: [iphoneagent]
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        NSBluetoothAlwaysUsageDescription: ESP32 Agent talks to its USB board over Bluetooth to see the screen and move the pointer.
-        UIBackgroundModes: [bluetooth-central]
+        NSBluetoothAlwaysUsageDescription: ESP32 Agent connects to its Bluetooth mouse and keyboard to operate this iPhone.
+        UIBackgroundModes: [bluetooth-central, screen-capture]
+        NSScreenCaptureUsageDescription: Share this iPhone screen so the agent can see and carry out your task.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         CFBundleDocumentTypes:  # shared run archives (Settings › Privacy › Export) open as imported runs
@@ -64,12 +65,14 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         LOCALIZATION_PREFERS_STRING_CATALOGS: YES
-        # Hotspot entitlement needs an Apple ID in Xcode; opt in via Local.xcconfig.
+        # Optional App Group and notification entitlements, configured in Local.xcconfig.
         CODE_SIGN_ENTITLEMENTS: $(IA_ENTITLEMENTS)
   AgentActivity:
     type: app-extension
     platform: iOS
-    sources: [AgentActivity, Shared]
+    sources:
+      - AgentActivity
+      - Shared
     info:
       path: AgentActivity/Info.plist
       properties:

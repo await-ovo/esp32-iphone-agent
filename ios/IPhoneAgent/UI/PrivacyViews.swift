@@ -17,7 +17,7 @@ struct PrivacyLists: View {
         }
     }
 
-    static let kept: [LocalizedStringKey] = ["Per-step screenshots", "Actions", "Model replies", "Timings",
+    static let kept: [LocalizedStringKey] = ["Per-step screenshots", "Actions", "Action summaries", "Timings",
                                              "Board metrics", "Device model and iOS version"]
     static let never: [LocalizedStringKey] = ["Wi-Fi password", "API key", "Base URL", "Contacts"]
 }
@@ -99,7 +99,7 @@ struct PrivacySettingsView: View {
             }
             if let error { Text(verbatim: error).foregroundStyle(Palette.stop).font(.footnote) }
         } footer: {
-            Text("A .zip with steps, metrics, screenshots, video frames and debug.log, redacted before it is written.")
+            Text("A .zip with steps, metrics, screenshots and debug.log, redacted before it is written.")
         }
     }
 

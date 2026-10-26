@@ -21,10 +21,9 @@
 #define CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT 24
 #undef CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU
 #define CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU 517
-// One L2CAP connection-oriented channel (room for a CoC video path later).
+// No bulk-data channels: the board carries only HID, commands and status.
 #undef CONFIG_BT_NIMBLE_L2CAP_COC_MAX_NUM
-#define CONFIG_BT_NIMBLE_L2CAP_COC_MAX_NUM 1
-#define MYNEWT_VAL_BLE_L2CAP_COC_MPS 247
+#define CONFIG_BT_NIMBLE_L2CAP_COC_MAX_NUM 0
 // Host and C++ wrapper logs off (5 = none for the host, 0 = none for the wrapper).
 #undef CONFIG_BT_NIMBLE_LOG_LEVEL
 #undef CONFIG_BT_NIMBLE_LOG_LEVEL_INFO

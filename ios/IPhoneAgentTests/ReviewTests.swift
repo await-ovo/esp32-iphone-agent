@@ -3,42 +3,11 @@ import XCTest
 
 /// Needs-your-help pauses, intent hints, the AI optimizer's reply and demonstration drafts.
 @MainActor final class ReviewTests: XCTestCase {
-    func testGivingUpAsksForHelpAndGoesOnAfterTakeOver() async {
-        let model = SystemRecorder { n in
-            switch n {
-            case 1: return "1. open it"
-            case 2: return "THINK: I need a login\nDO: fail login required"
-            case 3: return "1. go on"
-            default: return "THINK: there\nDO: done ok"
-            }
-        }
-        let agent = AgentLoop(phone: FakeGestures(), screen: FakeScreen(), actor: model, planner: model, trace: nil)
-        var asked: [String] = []
-        agent.onHelp = { reason in asked.append(reason); return .resume }
-        await agent.run()
-        XCTAssertEqual(asked, ["login required"])
-        XCTAssertEqual(agent.steps.map { $0["action"]?.str },
-                       ["plan", "fail", "help", "takeover", "replan (stuck)", "done"])
-    }
-
-    func testStopFromHelpEndsTheRun() async {
-        let model = SystemRecorder { n in n == 1 ? "1. open it" : "THINK: stuck\nDO: fail no button" }
-        let agent = AgentLoop(phone: FakeGestures(), screen: FakeScreen(), actor: model, planner: model, trace: nil)
-        agent.onHelp = { _ in .stop }
-        await agent.run()
-        XCTAssertEqual(agent.steps.last?["action"], .str("stopped"))
-    }
-
-    func testIntentHintsAreAppendedToTheActorPromptOnly() async {
-        let model = SystemRecorder { n in n == 1 ? "1. go" : "THINK: there\nDO: done ok" }
-        let agent = AgentLoop(phone: FakeGestures(), screen: FakeScreen(), actor: model, planner: model, trace: nil)
-        agent.hints = ["Type the time instead of scrolling"]
-        await agent.run()
-        let rule = "\n" + AssistiveTouchSpots.rule
-        XCTAssertEqual(model.systems[0], Prompts.plannerApp + rule)
-        XCTAssertEqual(model.systems[1], Prompts.actor + rule + "\n\nHints for this task:\n- Type the time instead of scrolling")
-        agent.hints = []
-        XCTAssertEqual(agent.actorPrompt, Prompts.actor + rule)
+    func testIntentHintsAreIncludedInMidsceneTask() {
+        let agent = MidsceneController(phone: nil, screen: nil, trace: nil)
+        agent.showMock(task: "Set an alarm", plan: "", steps: [], running: false)
+        agent.hints = ["Type the time"]
+        XCTAssertEqual(agent.prompt, "Set an alarm\n\nHints for this task:\n- Type the time")
     }
 
     func testOptimizerReplyIsParsed() {
@@ -77,18 +46,30 @@ import XCTest
         XCTAssertTrue(text.contains("[ADDED BY USER]"))
         XCTAssertEqual(draft.corrections, 2)
     }
-}
-
-/// A fake model that also keeps each system prompt.
-@MainActor final class SystemRecorder: ChatModel {
-    let model = "fake"
-    private(set) var systems: [String] = []
-    private let reply: (Int) -> String
-
-    init(_ reply: @escaping (Int) -> String) { self.reply = reply }
-
-    func chat(system: String, text: String, image: Data?, maxTokens: Int, temperature: Double) async throws -> ChatResult {
-        systems.append(system)
-        return ChatResult(text: reply(systems.count), firstToken: nil, total: 0)
+    func testReportUsesMidsceneNamesAndStructuredParameters() {
+        let input: JObject = ["action": .str("type"), "sdkAction": .str("Input"),
+                              "sdkParam": .obj(["value": .str("08:00"), "mode": .str("replace")])]
+        XCTAssertEqual(StepText.reportTitle(input), "aiAct → Input")
+        XCTAssertEqual(StepText.reportParameters(input), "{\"value\": \"08:00\", \"mode\": \"replace\"}")
+        XCTAssertEqual(StepText.reportTitle(["action": .str("tap"), "sdkAction": .str("Tap")]), "aiAct → Tap")
+        XCTAssertEqual(StepText.reportTitle(["action": .str("home")]), StepText.title(["action": .str("home")]))
+        XCTAssertNil(StepText.reportParameters(["sdkParam": .obj([:])]))
     }
+
+    func testExistingTraceRestoresTargetsWithoutAddingFakeActionSteps() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trace = TraceStore(root: root)
+        trace.start(task: "Open Clock")
+        trace.write(kind: "progress", ["phase": .str("action_running"), "name": .str("Tap"), "target": .str("Clock icon")])
+        trace.write(kind: "step", ["id": .int(0), "action": .str("tap"), "sdkAction": .str("Tap"), "status": .str("running")])
+        trace.write(kind: "step-update", ["id": .int(0), "status": .str("completed")])
+        trace.write(kind: "step", ["id": .int(1), "action": .str("done")])
+        let run = try XCTUnwrap(RunStore.load(try XCTUnwrap(trace.dir)))
+        XCTAssertEqual(run.steps.count, 2)
+        XCTAssertEqual(run.steps[0].action["target"]?.str, "Clock icon")
+        XCTAssertEqual(run.steps[0].action["status"]?.str, "completed")
+        XCTAssertNil(run.steps[1].action["target"])
+    }
+
 }

@@ -1,8 +1,8 @@
 import CoreBluetooth
 import Foundation
 
-/// CoreBluetooth central for the board: scan, connect (bonding happens on the first `net` read), command
-/// writes, status / reply / video notifies. Reconnects on its own; restores state when iOS relaunches the app.
+/// CoreBluetooth central for the board: scan, connect (bonding happens on the first encrypted status read), command
+/// writes, status / reply notifies. Reconnects on its own; restores state when iOS relaunches the app.
 @MainActor final class BoardLink: NSObject, ObservableObject, BoardTransport {
     struct Found: Identifiable, Equatable {
         let id: UUID
@@ -19,12 +19,10 @@ import Foundation
     @Published private(set) var pairedID: UUID?
     @Published private(set) var name = ""
     @Published private(set) var status: BoardStatus?
-    @Published private(set) var net: NetConfig?
     @Published private(set) var lastError = ""
     @Published private(set) var signalStrength: Int?
 
     let commands = CommandChannel()
-    var onVideo: ((Data) -> Void)?
     var onStatus: ((BoardStatus) -> Void)?
     var onLinkUp: (() -> Void)?
     var onLinkDown: (() -> Void)?
@@ -37,7 +35,6 @@ import Foundation
     private var peripheral: CBPeripheral?
     private var chars: [CBUUID: CBCharacteristic] = [:]
     private var subscribed = Set<CBUUID>()
-    private var netWaiters: [CheckedContinuation<NetConfig, Error>] = []
     private static let pairedKey = "pairedBoard"
     private var statusReads: Task<Void, Never>?
     private var scanDeadline: Task<Void, Never>?
@@ -213,23 +210,6 @@ import Foundation
         } else { central.connect(peripheral, options: nil) }
     }
 
-    // MARK: - net
-
-    /// Read the network config (the first read pairs the phone with the board).
-    func readNet() async throws -> NetConfig {
-        if connected, let net { return net }
-        guard let peripheral, let c = chars[BoardUUID.net] else { throw DeviceError(message: "board not connected") }
-        return try await withCheckedThrowingContinuation { cont in
-            netWaiters.append(cont)
-            peripheral.readValue(for: c)
-        }
-    }
-
-    func writeNet(_ config: NetConfig) throws {
-        guard let peripheral, let c = chars[BoardUUID.net] else { throw DeviceError(message: "board not connected") }
-        peripheral.writeValue(try JSONEncoder().encode(config), for: c, type: .withResponse)
-    }
-
     // MARK: - BoardTransport
 
     func write(_ line: String) throws {
@@ -273,16 +253,14 @@ import Foundation
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             scanning = false
-            mockConnect(name: "ESP32 Agent 7C3E",
-                        net: NetConfig(mode: "ap", ssid: "ESP32Agent-7C3E", pass: "demo-pass", ip: "192.168.4.1"))
+            mockConnect(name: "ESP32 Agent 7C3E")
         }
     }
 
     /// Pretend a board is paired and connected (MockMode).
-    func mockConnect(name: String, net: NetConfig) {
+    func mockConnect(name: String) {
         state = .poweredOn
         self.name = name
-        self.net = net
         pairedID = pairedID ?? UUID()
         found = [Found(id: UUID(), name: "ESP32 Agent 7C3E", rssi: -71)]
         connected = true
@@ -297,10 +275,9 @@ import Foundation
 
     private func mockReply(_ line: String) {
         let parts = line.split(separator: " ").map(String.init)
-        let extra = parts.count > 1 && parts[1] == "bench" ? " 6400" : ""
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 40_000_000)
-            commands.handleReply("\(parts[0]) ok" + extra)
+            commands.handleReply("\(parts[0]) ok")
         }
     }
 
@@ -329,15 +306,12 @@ import Foundation
         statusReads?.cancel()
         connectionDeadline?.cancel()
         connecting = false
-        net = nil
         let was = connected
         connected = false
         linking = false
         chars = [:]
         subscribed = []
         commands.linkDown()
-        netWaiters.forEach { $0.resume(throwing: DeviceError(message: "board disconnected")) }
-        netWaiters = []
         if was {
             log("board disconnected")
             onLinkDown?()
@@ -443,7 +417,7 @@ extension BoardLink: CBPeripheralDelegate {
             }
             for c in service.characteristics ?? [] {
                 chars[c.uuid] = c
-                if [BoardUUID.reply, BoardUUID.status, BoardUUID.video].contains(c.uuid) { p.setNotifyValue(true, for: c) }
+                if [BoardUUID.reply, BoardUUID.status].contains(c.uuid) { p.setNotifyValue(true, for: c) }
             }
         }
     }
@@ -454,9 +428,9 @@ extension BoardLink: CBPeripheralDelegate {
             if let error { failConnection("subscribe \(c.uuid): \(error.localizedDescription)"); return }
             guard c.isNotifying else { return }
             subscribed.insert(c.uuid)
-            if !connected && subscribed.isSuperset(of: [BoardUUID.reply, BoardUUID.status, BoardUUID.video]) {
+            if !connected && subscribed.isSuperset(of: [BoardUUID.reply, BoardUUID.status]) {
                 // Reading the encrypted characteristic triggers pairing before setup is marked ready.
-                if let netChar = chars[BoardUUID.net] { p.readValue(for: netChar) }
+                if let status = chars[BoardUUID.status] { p.readValue(for: status) }
             }
         }
     }
@@ -465,40 +439,20 @@ extension BoardLink: CBPeripheralDelegate {
         MainActor.assumeIsolated {
             guard p === peripheral else { return }
             lastNotify = now()
-            if c.uuid == BoardUUID.net {
-                let waiters = netWaiters
-                netWaiters = []
-                if let error {
-                    waiters.forEach { $0.resume(throwing: error) }
-                    if linking { failConnection(error.localizedDescription) }
-                } else if let v = c.value, let config = try? JSONDecoder().decode(NetConfig.self, from: v) {
-                    net = config
-                    if linking && subscribed.isSuperset(of: [BoardUUID.reply, BoardUUID.status, BoardUUID.video]) {
-                        connectionDeadline?.cancel()
-                        stopScan()
-                        connected = true
-                        linking = false
-                        lastError = ""
-                        pairedID = p.identifier
-                        UserDefaults.standard.set(p.identifier.uuidString, forKey: Self.pairedKey)
-                        readySince = now()
-                        commands.linkUp()
-                        startFullStatusReads()
-                        onLinkUp?()
-                        log("board ready, encrypted configuration read (MTU \(mtu))")
-                    }
-                    waiters.forEach { $0.resume(returning: config) }
-                } else {
-                    waiters.forEach { $0.resume(throwing: DeviceError(message: "bad net config")) }
-                }
-                return
-            }
             guard error == nil, let v = c.value else { return }
             switch c.uuid {
-            case BoardUUID.video: onVideo?(v)
             case BoardUUID.reply: commands.handleReply(String(decoding: v, as: UTF8.self))
             case BoardUUID.status:
                 if let s = BoardStatus.decode(v) {
+                    if !connected, subscribed.isSuperset(of: [BoardUUID.reply, BoardUUID.status]) {
+                        connectionDeadline?.cancel(); stopScan()
+                        connected = true; linking = false; lastError = ""
+                        pairedID = p.identifier
+                        UserDefaults.standard.set(p.identifier.uuidString, forKey: Self.pairedKey)
+                        readySince = now()
+                        commands.linkUp(); startFullStatusReads(); onLinkUp?()
+                        log("board ready, status received (MTU \(mtu))")
+                    }
                     let merged = status?.merged(with: s) ?? s
                     statusRevision += 1
                     status = merged

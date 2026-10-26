@@ -32,6 +32,12 @@ struct ProviderFields: View {
             ModelPicker(settings: settings, title: "Model", selection: $settings.model,
                         automatic: String(localized: "Choose a model"), allowsDefault: false)
                 .frame(minHeight: 44).padding(.vertical, Space.xs)
+            Divider()
+            LabeledContent("Midscene model family") {
+                TextField("Midscene model family", text: $settings.modelFamily, prompt: Text(verbatim: "e.g. doubao-seed"))
+                    .multilineTextAlignment(.trailing).labelsHidden()
+            }
+            .frame(minHeight: 44).padding(.vertical, Space.xs)
             if let error = settings.modelsError {
                 Text(verbatim: error).font(.footnote).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

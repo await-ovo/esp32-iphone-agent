@@ -1,11 +1,13 @@
 import Foundation
+import CryptoKit
 
-/// Debug traces: one folder per agent run (Documents/traces/<date>) with every model call, the screenshot it
-/// saw, step timings and a metrics.json snapshot. Port of debug.py; Documents is shared with Finder/devicectl.
+/// One local folder per run: compact step events, deduplicated JPEGs and metrics.
+/// Documents is shared with Finder/devicectl; full Midscene reports are not generated.
 @MainActor final class TraceStore {
     let root: URL
     private(set) var dir: URL?
     private var n = 0
+    private var frames = Set<String>()
 
     init(root: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("traces")) {
@@ -16,11 +18,22 @@ import Foundation
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd-HHmmss"
         f.locale = Locale(identifier: "en_US_POSIX")
-        let d = root.appendingPathComponent(f.string(from: Date()))
+        var d = root.appendingPathComponent(f.string(from: Date()))
+        if FileManager.default.fileExists(atPath: d.path) { d.appendPathExtension(String(UUID().uuidString.prefix(8))) }
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         dir = d
         n = 0
+        frames = []
         write(kind: "task", ["task": .str(task)])
+    }
+
+    /// Repeated SDK screenshots share one JPEG; JSON records reference the file, never base64.
+    func saveFrame(_ frame: Data) -> String? {
+        guard let dir else { return nil }
+        let name = SHA256.hash(data: frame).map { String(format: "%02x", $0) }.joined() + ".jpg"
+        if frames.contains(name) { return name }
+        do { try frame.write(to: dir.appendingPathComponent(name)); frames.insert(name); return name }
+        catch { DebugLog.write("trace screenshot: \(error.localizedDescription)"); return nil }
     }
 
     func write(_ frame: Data? = nil, kind: String, _ record: JObject) {

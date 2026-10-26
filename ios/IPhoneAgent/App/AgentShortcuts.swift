@@ -5,6 +5,7 @@ import SwiftUI
 /// background (the run itself happens on the Home Screen) and may start the Live Activity.
 struct RunTaskIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Run a Task"
+    static let openAppWhenRun = true
     static let description = IntentDescription("Asks ESP32 Agent to do a task on this phone, like \"Open Settings and go to Wi-Fi\".")
 
     @Parameter(title: "Task", requestValueDialog: "What should I do?") var task: String
@@ -32,7 +33,7 @@ struct CalibrateIntent: AppIntent {
 
 struct GetStatusIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Status"
-    static let description = IntentDescription("Tells whether the board, Screen Mirroring, calibration and the model are ready.")
+    static let description = IntentDescription("Tells whether the board, screen sharing, calibration and the model are ready.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {

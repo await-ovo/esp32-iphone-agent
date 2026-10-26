@@ -4,8 +4,8 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var board: BoardLink
-    @ObservedObject var feed: VideoFeed
-    @ObservedObject var agent: AgentLoop
+    @ObservedObject var feed: ScreenCaptureFeed
+    @ObservedObject var agent: MidsceneController
     @ObservedObject var settings: Settings
     @ObservedObject var intents: IntentStore
     @ObservedObject var recorder: DemoRecorder
@@ -149,7 +149,7 @@ struct HomeView: View {
         case .failure: return "That did not work out. The replay shows where I got stuck."
         default: break
         }
-        if !board.connected { return "Plug me into the USB-C port to wake me up." }
+        if !board.connected { return "Power on the board and connect it over Bluetooth." }
         if blocker != nil { return "Almost there. Tap an orange item to finish setup." }
         return "Hi, I'm \(settings.agentName). Tell me what to do on this iPhone."
     }
@@ -160,7 +160,7 @@ struct HomeView: View {
         Section {
             HStack(alignment: .top, spacing: Space.m) {
                 Group {
-                    if let jpeg = feed.frame, let img = UIImage(data: jpeg) {
+                    if let jpeg = agent.selectedFrame, let img = UIImage(data: jpeg) {
                         Image(uiImage: img).resizable().scaledToFit()
                     } else {
                         Color(uiColor: .tertiarySystemFill)
@@ -177,8 +177,7 @@ struct HomeView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     }
-                    ProgressView(value: Double(min(app.moveCount, agent.maxSteps)), total: Double(agent.maxSteps))
-                    Text("Step \(app.moveCount) of up to \(agent.maxSteps)")
+                    Text("\(app.moveCount) actions")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
@@ -304,7 +303,6 @@ struct HomeView: View {
     /// The first thing missing before a run, and the setup page that fixes it.
     private var blocker: (text: LocalizedStringKey, page: SetupPage)? {
         if !board.connected { return ("Connect the board", .connect) }
-        if board.status?.ap != "streaming" { return ("Start Screen Mirroring", .see) }
         if !app.pointer.calibrated { return ("Calibrate the pointer", .act) }
         if !app.modelReady { return ("Set up the model", .brain) }
         return nil

@@ -1,12 +1,405 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Screen sharing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕共享"
+          }
+        }
+      }
+    },
+    "Allow Screen Sharing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许屏幕共享"
+          }
+        }
+      }
+    },
+    "Allow sharing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许共享"
+          }
+        }
+      }
+    },
+    "Allow" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权"
+          }
+        }
+      }
+    },
+    "Allow screen sharing in the system picker" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在系统选择器中允许共享屏幕"
+          }
+        }
+      }
+    },
+    "Screen offline" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画面已断开"
+          }
+        }
+      }
+    },
+    "Open the app to restart screen sharing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开 App，重新授权屏幕共享"
+          }
+        }
+      }
+    },
+    "Screen" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画面"
+          }
+        }
+      }
+    },
+    "Plan ready" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "计划已生成"
+          }
+        }
+      }
+    },
+    "Preparing…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "准备中…"
+          }
+        }
+      }
+    },
+    "Preparing the next action…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备下一个动作…"
+          }
+        }
+      }
+    },
+    "Action done" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "动作已完成"
+          }
+        }
+      }
+    },
+    "Action finished; checking the screen" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "动作已完成，正在检查画面"
+          }
+        }
+      }
+    },
+    "Step failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "步骤失败"
+          }
+        }
+      }
+    },
+    "The current step failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前步骤执行失败"
+          }
+        }
+      }
+    },
+    "Holding %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在长按 %@"
+          }
+        }
+      }
+    },
+    "Holding…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在长按…"
+          }
+        }
+      }
+    },
+    "Scrolling…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在滚动…"
+          }
+        }
+      }
+    },
+    "Scroll" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "滚动"
+          }
+        }
+      }
+    },
+    "%lld actions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个动作"
+          }
+        }
+      }
+    },
+    "Screen sharing is already starting." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕共享正在启动。"
+          }
+        }
+      }
+    },
+    "Open the app to allow screen sharing." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请打开 App，允许共享屏幕。"
+          }
+        }
+      }
+    },
+    "Screen sharing has stopped. Open the app to share the screen again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕共享已停止。请打开 App，重新授权共享。"
+          }
+        }
+      }
+    },
+    "No fresh screen image arrived. Open the app to restart screen sharing." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未收到新鲜画面。请打开 App，重新授权屏幕共享。"
+          }
+        }
+      }
+    },
+    "Allow screen sharing to continue" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许屏幕共享后继续"
+          }
+        }
+      }
+    },
+    "Allow screen sharing in the system picker. Your screen stays on this iPhone until a task sends a screenshot to your chosen model." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在系统选择器中允许共享屏幕。画面留在本机，任务只会将选中的截图发送给你配置的模型。"
+          }
+        }
+      }
+    },
+    "When Stop Sharing appears, sharing is active. Tap outside the system panel to return to the app." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "看到“停止共享”表示共享已经开始。轻点系统面板外的空白处，即可返回 App。"
+          }
+        }
+      }
+    },
+    "Each task asks to share your screen. Sharing stops when the task ends; a full video is never saved." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务启动时请求屏幕共享，任务结束后停止采集，不保存完整视频。"
+          }
+        }
+      }
+    },
+    "Runs keep step screenshots and logs for review. Screen sharing does not save a video." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务保存步骤截图和日志供复盘，屏幕共享不会保存视频。"
+          }
+        }
+      }
+    },
+    "Plans and executes tasks from screenshots." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "根据截图规划并执行任务。"
+          }
+        }
+      }
+    },
+    "Capture FPS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "采集帧率"
+          }
+        }
+      }
+    },
+    "JPEG time" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JPEG 耗时"
+          }
+        }
+      }
+    },
+    "Frame age" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画面年龄"
+          }
+        }
+      }
+    },
+    "Screenshot wait" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图等待"
+          }
+        }
+      }
+    },
+    "Native capture" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机采集"
+          }
+        }
+      }
+    },
+    "Capture" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "采集"
+          }
+        }
+      }
+    },
+    "JPEG conversion" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JPEG 转换"
+          }
+        }
+      }
+    },
+    "%@" : {},
+    "acting" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "动手中"
+          }
+        }
+      }
+    },
     "Board offline" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "板子离线"
+          }
+        }
+      }
+    },
+    "content" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "惬意"
           }
         }
       }
@@ -27,6 +420,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每天 7 点闹钟"
+          }
+        }
+      }
+    },
+    "dizzy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "晕乎乎"
           }
         }
       }
@@ -71,12 +475,48 @@
         }
       }
     },
+    "ESP32 Agent" : {
+      "shouldTranslate" : false
+    },
+    "failure" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失败"
+          }
+        }
+      }
+    },
+    "idle" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空闲"
+          }
+        }
+      }
+    },
     "Intent" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "意图"
+          }
+        }
+      }
+    },
+    "listening" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在听"
           }
         }
       }
@@ -151,22 +591,22 @@
         }
       }
     },
-    "Run Last Intent" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行上次的意图"
-          }
-        }
-      }
-    },
     "Run a Saved Intent" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "运行已保存的意图"
+          }
+        }
+      }
+    },
+    "Run Last Intent" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行上次的意图"
           }
         }
       }
@@ -251,6 +691,17 @@
         }
       }
     },
+    "sleeping" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "睡觉"
+          }
+        }
+      }
+    },
     "Smiley drawn" : {
       "localizations" : {
         "zh-Hans" : {
@@ -281,16 +732,6 @@
         }
       }
     },
-    "Stop Recording" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "停止录制"
-          }
-        }
-      }
-    },
     "Stop ESP32 Agent" : {
       "localizations" : {
         "zh-Hans" : {
@@ -302,6 +743,16 @@
       }
     },
     "Stop recording" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止录制"
+          }
+        }
+      }
+    },
+    "Stop Recording" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -331,92 +782,8 @@
         }
       }
     },
-    "Wi-Fi settings" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wi-Fi 设置"
-          }
-        }
-      }
-    },
-    "acting" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "动手中"
-          }
-        }
-      }
-    },
-    "content" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "惬意"
-          }
-        }
-      }
-    },
-    "dizzy" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "晕乎乎"
-          }
-        }
-      }
-    },
-    "failure" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "失败"
-          }
-        }
-      }
-    },
-    "ESP32 Agent" : {
-      "shouldTranslate" : false
-    },
-    "idle" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "空闲"
-          }
-        }
-      }
-    },
-    "listening" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在听"
-          }
-        }
-      }
-    },
-    "sleeping" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "睡觉"
-          }
-        }
-      }
-    },
     "success" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -427,182 +794,12 @@
       }
     },
     "thinking" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "思考中"
-          }
-        }
-      }
-    },
-    "wink" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "眨眼"
-          }
-        }
-      }
-    },
-    "Waiting for the model…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在等待模型…"
-          }
-        }
-      }
-    },
-    "Total request time" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请求总耗时"
-          }
-        }
-      }
-    },
-    "Server response" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "服务端响应"
-          }
-        }
-      }
-    },
-    "First answer token" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "首个答案 token"
-          }
-        }
-      }
-    },
-    "Includes network and model processing time." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "包含网络传输和模型处理时间。"
-          }
-        }
-      }
-    },
-    "The model request timed out before it finished. Try again or choose a specific vision model instead of automatic routing." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模型请求尚未完成便已超时。请重试，或选择具体的视觉模型而非自动路由。"
-          }
-        }
-      }
-    },
-    "Retrying…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在重试…"
-          }
-        }
-      }
-    },
-    "The model timed out. Trying once more…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模型超时了，正在再试一次…"
-          }
-        }
-      }
-    },
-    "Swiping right" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向右滑动"
-          }
-        }
-      }
-    },
-    "Swiping left" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向左滑动"
-          }
-        }
-      }
-    },
-    "Swiping down" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向下滑动"
-          }
-        }
-      }
-    },
-    "Swiping up" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向上滑动"
-          }
-        }
-      }
-    },
-    "Think" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "思考"
-          }
-        }
-      }
-    },
-    "Act" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "操作"
-          }
-        }
-      }
-    },
-    "End" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "结束"
-          }
-        }
-      }
-    },
-    "Wait" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等待"
           }
         }
       }
@@ -617,162 +814,23 @@
         }
       }
     },
-    "Look" : {
+    "Wi-Fi settings" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "查看"
+            "value" : "Wi-Fi 设置"
           }
         }
       }
     },
-    "Thinking about my next move…" : {
+    "wink" : {
+      "extractionState" : "manual",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在思考下一步…"
-          }
-        }
-      }
-    },
-    "Waiting for the model to respond…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在等待模型回复…"
-          }
-        }
-      }
-    },
-    "Planning…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在规划…"
-          }
-        }
-      }
-    },
-    "Thinking through my plan…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在构思我的计划…"
-          }
-        }
-      }
-    },
-    "Plan" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "规划"
-          }
-        }
-      }
-    },
-    "Retry" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重试"
-          }
-        }
-      }
-    },
-    "You" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等你"
-          }
-        }
-      }
-    },
-    "Tap" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "点击"
-          }
-        }
-      }
-    },
-    "Type" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输入"
-          }
-        }
-      }
-    },
-    "Key" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "按键"
-          }
-        }
-      }
-    },
-    "Swipe" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "滑动"
-          }
-        }
-      }
-    },
-    "Draw" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "绘制"
-          }
-        }
-      }
-    },
-    "Home" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "主页"
-          }
-        }
-      }
-    },
-    "Back" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "返回"
-          }
-        }
-      }
-    },
-    "Waiting for the screen…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在等待屏幕变化…"
+            "value" : "眨眼"
           }
         }
       }

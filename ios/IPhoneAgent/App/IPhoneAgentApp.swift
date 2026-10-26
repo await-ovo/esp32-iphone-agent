@@ -44,6 +44,7 @@ struct RootView: View {
                 .tag(AppTab.settings)
         }
         .fullScreenCover(item: $app.review) { draft in ReviewView(draft: draft, app: app) }
+        .background { MidsceneHost(agent: app.agent).frame(width: 1, height: 1).allowsHitTesting(false).accessibilityHidden(true) }
         .background {
             Color.clear.fullScreenCover(item: $app.setupPage) { page in
             OnboardingView(app: app, board: app.board, feed: app.feed, settings: settings, calibrator: app.calibrator,
@@ -61,7 +62,7 @@ struct RootView: View {
                 do { try app.importRuns(url) } catch { app.say("import: \(error.localizedDescription)") }
                 return
             }
-            if app.handleDebug(url) { return }  // iphoneagent://run?task=…, calibrate, stop, bench, snap
+            if app.handleDebug(url) { return }  // iphoneagent://run?task=…, calibrate, stop, capture
             // iphoneagent://run/<id> from the Live Activity
             guard url.scheme == "iphoneagent", url.host == "run" else { return }
             let id = url.lastPathComponent

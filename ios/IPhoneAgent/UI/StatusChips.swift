@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Home's readiness at a glance: board, mirroring, mouse, pointer and model. A problem chip turns orange;
+/// Home's readiness at a glance: board, screen sharing, mouse, pointer and model. A problem chip turns orange;
 /// tapping it opens the setup page that fixes it.
 struct StatusChips: View {
     @ObservedObject var app: AppModel
@@ -11,8 +11,10 @@ struct StatusChips: View {
     var body: some View {
         FlowLayout(spacing: Space.s) {
             chip("Board", "cable.connector", ok: board.connected, page: .connect)
-            chip("Mirroring", "rectangle.on.rectangle", ok: board.connected && board.status?.ap == "streaming", page: .see)
-            chip("Mouse", "cursorarrow", ok: board.connected && board.status?.usb == "ok", page: .act)
+            if app.feed.capturing || app.feed.choosing {
+                chip("Screen sharing", "rectangle.on.rectangle", ok: app.feed.live, busy: app.feed.choosing, page: .see)
+            }
+            chip("Mouse", "cursorarrow", ok: board.connected && board.status?.inputReady == true, page: .act)
             chip(calibrator.busy ? "Calibrating" : "Pointer", "scope", ok: pointer.calibrated, busy: calibrator.busy, page: .act)
             chip("Model", "brain", ok: app.modelReady && app.modelOK != false, page: .brain)
         }

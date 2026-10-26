@@ -2,10 +2,10 @@ import Foundation
 
 /// Drive the app without touching the phone, for development:
 ///   iphoneagent://run?task=<urlencoded>   iphoneagent://calibrate   iphoneagent://stop
-///   iphoneagent://bench?kb=256             iphoneagent://snap
-/// or launch arguments: -run "<task>", -calibrate, -bench 256, -snap
+///   iphoneagent://capture
+/// or launch arguments: -run "<task>", -calibrate, -capture
 /// (e.g. `xcrun devicectl device process launch --device <id> <bundle id> -run "Open Clock"`).
-/// Commands that need the board wait up to 30 s for it (and mirroring, for a run) before giving up.
+/// Commands that need input wait up to 30 s for both the board and system HID connection.
 /// The URL commands exist in Debug builds only: in a release any web page could open them.
 extension AppModel {
     /// True when the URL was a debug command (iphoneagent://run/<id> from the Live Activity is not).
@@ -21,31 +21,26 @@ extension AppModel {
         case "run":
             guard let task = arg("task"), !task.isEmpty else { return false }
             debugCommand("run", task: task)
-        case "calibrate", "stop", "snap":
+        case "calibrate", "stop", "capture":
             debugCommand(host)
         case "status":
             say(statusSummary)
-        case "bench":
-            debugCommand("bench", kb: Int(arg("kb") ?? "") ?? 256)
         default:
             return false
         }
         return true
     }
 
-    /// A line from the Mac harness, relayed by the board: "run <task>", "calibrate", "stop", "bench <kb>",
-    /// "snap" or "status".
+    /// A line from the Mac harness, relayed by the board: "run <task>", "calibrate", "stop",
+    /// "capture" or "status".
     func handleAppCommand(_ line: String) {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let name = parts.first ?? "", rest = parts.count > 1 ? parts[1] : ""
         switch name {
         case "run" where !rest.isEmpty: debugCommand("run", task: rest)
-        case "calibrate", "stop", "snap": debugCommand(name)
-        case "bench": debugCommand("bench", kb: Int(rest) ?? 256)
+        case "calibrate", "stop", "capture": debugCommand(name)
         case "status": say(statusSummary)
         case "log": relayHistory(Int(rest) ?? 50)
-        case "mode":
-            if let mode = FrameMode(rawValue: rest) { setFrameMode(mode) } else { say("frame mode: \(FrameMode.current.rawValue)") }
         default: say("debug: unknown app command \"\(line.prefix(40))\"")
         }
     }
@@ -66,17 +61,17 @@ extension AppModel {
         }
     }
 
-    /// One line: board, mirroring, calibration, model and run.
+    /// One line: board, screen sharing, calibration, model and run.
     var statusSummary: String {
         let s = board.status
-        let boardText = board.connected ? "connected usb \(s?.usb ?? "-") ap \(s?.ap ?? "-") sta \(s?.sta.map(String.init) ?? "-")"
+        let boardText = board.connected ? "connected hid \(s?.inputState ?? "-")"
             : "not connected"
         let mirror = feed.live ? String(format: "live %.2f", feed.aspect) : "off"
         let cal = pointer.span.map { "\($0.w)x\($0.h) " + (pointer.quality.map { String(format: "±%.1f%%", $0 * 100) } ?? "?") }
             ?? "none"
         let model = settings.isConfigured ? (settings.currentModel ?? "auto") : "not set"
         let run = agent.running ? "running step \(agent.steps.count)" : "idle"
-        return "status: frames \(FrameMode.current.rawValue); board \(boardText); mirroring \(mirror); calibration \(cal) (\(calibrator.phase)); "
+        return "status: source ScreenCaptureKit; board \(boardText); sharing \(mirror); calibration \(cal) (\(calibrator.phase)); "
             + "model \(model); run \(run); screen \(Int(DeviceScreen.size.width))x\(Int(DeviceScreen.size.height))"
     }
 
@@ -93,44 +88,39 @@ extension AppModel {
         #endif
         if let task = value(after: "-run") { debugCommand("run", task: task) }
         if args.contains("-calibrate") { debugCommand("calibrate") }
-        if args.contains("-bench") { debugCommand("bench", kb: Int(value(after: "-bench") ?? "") ?? 256) }
-        if args.contains("-snap") { debugCommand("snap") }
+        if args.contains("-capture") { debugCommand("capture") }
     }
 
-    private func debugCommand(_ name: String, task: String = "", kb: Int = 256) {
-        say("debug: \(name)\(task.isEmpty ? "" : " \"\(task)\"")\(name == "bench" ? " \(kb) KB" : "")")
+    private func debugCommand(_ name: String, task: String = "") {
+        say("debug: \(name)\(task.isEmpty ? "" : " \"\(task)\"")")
         Task { [weak self] in
             guard let self else { return }
             switch name {
             case "stop":
                 await stopAgent()
             case "run":
-                guard await waitReady(mirroring: true) else { return say("debug: run not started, board/mirroring not ready in 30 s") }
+                guard await waitReady() else { return say("debug: run not started, Bluetooth mouse not ready in 30 s") }
                 guard !agent.running else { return say("debug: a run is already going") }
                 tab = .agent
                 await run(task)
             case "calibrate":
-                guard await waitReady(mirroring: false) else { return say("debug: board not ready in 30 s") }
+                guard await waitReady() else { return say("debug: board not ready in 30 s") }
                 calibrator.calibrate()
-            case "bench":
-                guard await waitReady(mirroring: false) else { return say("debug: board not ready in 30 s") }
-                await bench(kb: kb)
-            case "snap":
-                guard await waitReady(mirroring: true) else { return say("debug: mirroring not ready in 30 s") }
-                await snapTest()
+            case "capture":
+                await captureTest()
             default:
                 break
             }
         }
     }
 
-    /// Board connected (and USB up), plus mirroring streaming when asked; waits up to `timeout` s.
-    func waitReady(mirroring: Bool, timeout: Double = 30) async -> Bool {
+    /// Board and HID connected; waits up to `timeout` s.
+    func waitReady(timeout: Double = 30) async -> Bool {
         if MockMode.on { return true }
         let deadline = now() + timeout
         while now() < deadline {
             let s = board.status
-            if board.connected && s?.usb == "ok" && (!mirroring || s?.ap == "streaming") { return true }
+            if board.connected && s?.inputReady == true { return true }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         return false
