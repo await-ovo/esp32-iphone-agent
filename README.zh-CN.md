@@ -5,7 +5,7 @@
 
 <div align="center">
 
-<img src="docs/images/logo-midscene.png" alt="ESP32 Agent 机器人与 Midscene 徽标" width="160">
+<img src="docs/images/logo.png" alt="ESP32 Agent 原版 Logo" width="160">
 
 <p align="center"><sub>Community fork of <a href="https://github.com/onehumanbeing/esp32-iphone-agent">ESP32 iPhone Agent</a> by Henry Yuan. Powered by <a href="https://github.com/web-infra-dev/midscene">Midscene</a>.</sub></p>
 
